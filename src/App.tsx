@@ -13,12 +13,11 @@ import History from "./pages/History";
 import Settings from "./pages/Settings";
 
 export default function App() {
-  const { toasts, reloadAll, bindSystemTheme } = useApp();
+  const { toasts, reloadAll } = useApp();
 
   useEffect(() => {
     reloadAll();
-    bindSystemTheme();
-  }, [reloadAll, bindSystemTheme]);
+  }, [reloadAll]);
 
   return (
     <HashRouter>

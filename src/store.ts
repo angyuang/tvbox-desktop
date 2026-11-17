@@ -1,26 +1,18 @@
-// 全局状态：应用状态（订阅）+ 应用设置 + 轻提示 + 聚合搜索结果保活
+// 全局状态：应用状态（订阅）+ 应用设置 + 轻提示 + 聚合搜索（跨页面保活）+ 搜索历史
 import { create } from "zustand";
 import { api } from "./api";
-import {
-  disabledSiteKeys,
-  pushSearchHistory,
-  removeSearchHistory,
-} from "./local";
-import type { AppStateDto, AppSettings, FavoriteItem, HistoryItem, SearchResultGroup } from "./types";
+import type {
+  AppStateDto,
+  AppSettings,
+  FavoriteItem,
+  HistoryItem,
+  SearchResultGroup,
+} from "./types";
 
 interface Toast {
   id: number;
   text: string;
   kind: "info" | "error" | "success";
-}
-
-export interface SearchProgressInfo {
-  done: number;
-  total: number;
-  siteKey: string;
-  siteName: string;
-  ok: boolean;
-  count: number;
 }
 
 interface AppStore {
@@ -30,49 +22,24 @@ interface AppStore {
   favorites: FavoriteItem[];
   history: HistoryItem[];
   toasts: Toast[];
-
-  // 聚合搜索：结果放在全局 store，返回/切页都不会清空（状态保活）
-  searchKw: string;
-  searchResults: SearchResultGroup[];
-  searching: boolean;
-  searchError: string;
-  searchProgress: SearchProgressInfo | null;
-
   toast: (text: string, kind?: Toast["kind"]) => void;
   reloadState: () => Promise<void>;
   reloadSettings: () => Promise<void>;
   applyAppearance: (s: AppSettings) => void;
-  bindSystemTheme: () => void;
   reloadFavorites: () => Promise<void>;
   reloadHistory: () => Promise<void>;
   reloadAll: () => Promise<void>;
-
-  runSearch: (kw: string) => Promise<void>;
-  resetSearch: () => void;
-  setSearchProgress: (p: SearchProgressInfo | null) => void;
-  addSearchHistory: (kw: string) => void;
-  dropSearchHistory: (kw: string) => void;
 }
 
 let toastSeq = 0;
 
-// 强调色 -> 浅背景色（透明度 12%）
-function accentSoft(hex: string): string {
+// 强调色 -> 浅背景色（浅色主题透明度 12%，深色主题 20% 才看得出来）
+function accentSoft(hex: string, theme: string): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
-  if (!m) return "#eef2ff";
+  const alpha = theme === "light" ? 0.12 : 0.2;
+  if (!m) return `rgba(37, 99, 235, ${alpha})`;
   const n = parseInt(m[1], 16);
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0.12)`;
-}
-
-// 主题判定：dark 或 system 且系统为暗色
-function isDarkTheme(s: AppSettings): boolean {
-  if (s.theme === "dark") return true;
-  if (s.theme === "light") return false;
-  try {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
-  } catch {
-    return false;
-  }
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
 export const useApp = create<AppStore>((set, get) => ({
@@ -82,12 +49,6 @@ export const useApp = create<AppStore>((set, get) => ({
   favorites: [],
   history: [],
   toasts: [],
-
-  searchKw: "",
-  searchResults: [],
-  searching: false,
-  searchError: "",
-  searchProgress: null,
 
   toast: (text, kind = "info") => {
     const id = ++toastSeq;
@@ -117,35 +78,15 @@ export const useApp = create<AppStore>((set, get) => ({
     }
   },
 
-  // 强调色 / 密度 / 主题写入 DOM 与原生窗口，全局生效
+  // 主题 / 强调色 / 密度写入 CSS 与窗口（标题栏跟随），全局生效
   applyAppearance: (s: AppSettings) => {
     const root = document.documentElement;
+    const theme = s.theme === "light" ? "light" : "dark";
+    root.dataset.theme = theme;
     root.style.setProperty("--accent", s.accent);
-    root.style.setProperty("--accent-soft", accentSoft(s.accent));
+    root.style.setProperty("--accent-soft", accentSoft(s.accent, theme));
     document.body.classList.toggle("compact", s.density === "compact");
-    const dark = isDarkTheme(s);
-    document.body.classList.toggle("dark", dark);
-    // 原生窗口主题同步：标题栏 / 系统级 UI 跟随应用主题
-    import("@tauri-apps/api/window")
-      .then(({ getCurrentWindow }) => {
-        const w = getCurrentWindow();
-        const theme = s.theme === "dark" ? "dark" : s.theme === "light" ? "light" : null;
-        w.setTheme(theme).catch(() => undefined);
-      })
-      .catch(() => undefined);
-  },
-
-  // 监听系统主题变化（theme=system 时实时跟随），App 挂载时调用一次
-  bindSystemTheme: () => {
-    try {
-      const mq = window.matchMedia("(prefers-color-scheme: dark)");
-      mq.addEventListener?.("change", () => {
-        const s = get().settings;
-        if (s) get().applyAppearance(s);
-      });
-    } catch {
-      /* 忽略 */
-    }
+    api.setTheme(theme).catch(() => undefined);
   },
 
   reloadFavorites: async () => {
@@ -172,45 +113,90 @@ export const useApp = create<AppStore>((set, get) => ({
       get().reloadHistory(),
     ]);
   },
+}));
 
-  // 聚合搜索：结果与进度全部入 store；只有发起新搜索才会清空
-  runSearch: async (kw: string) => {
-    const w = kw.trim();
-    if (!w || get().searching) return;
-    set({
-      searchKw: w,
-      searching: true,
-      searchResults: [],
-      searchError: "",
-      searchProgress: null,
-    });
-    pushSearchHistory(w);
+// ---------------- 搜索历史（localStorage 持久化，最多 20 条） ----------------
+
+const HIST_KEY = "tvbox.searchHistory";
+const HIST_MAX = 20;
+
+export function loadSearchHistory(): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+    return Array.isArray(list) ? list.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSearchHistory(list: string[]) {
+  localStorage.setItem(HIST_KEY, JSON.stringify(list.slice(0, HIST_MAX)));
+}
+
+export function addSearchHistory(kw: string) {
+  const w = kw.trim();
+  if (!w) return;
+  const list = loadSearchHistory().filter((x) => x !== w);
+  list.unshift(w);
+  saveSearchHistory(list);
+}
+
+export function removeSearchHistory(kw: string) {
+  saveSearchHistory(loadSearchHistory().filter((x) => x !== kw));
+}
+
+export function clearSearchHistory() {
+  localStorage.removeItem(HIST_KEY);
+}
+
+// ---------------- 聚合搜索状态（放全局 store：切页面再回来不丢结果） ----------------
+
+export interface SearchProgress {
+  done: number;
+  total: number;
+  siteKey: string;
+  siteName: string;
+  ok: boolean;
+  count: number;
+}
+
+interface SearchStore {
+  kw: string;
+  results: SearchResultGroup[];
+  searching: boolean;
+  error: string;
+  progress: SearchProgress | null;
+  /** 已发起搜索的关键词（用于判断是否需要自动重搜） */
+  searchedKw: string;
+  setKw: (kw: string) => void;
+  setProgress: (p: SearchProgress | null) => void;
+  search: (word: string) => Promise<void>;
+}
+
+export const useSearch = create<SearchStore>((set, get) => ({
+  kw: "",
+  results: [],
+  searching: false,
+  error: "",
+  progress: null,
+  searchedKw: "",
+
+  setKw: (kw) => set({ kw }),
+  setProgress: (p) => set({ progress: p }),
+
+  search: async (word) => {
+    const w = word.trim();
+    if (!w) return;
+    set({ kw: w, searching: true, error: "", progress: null, searchedKw: w });
+    addSearchHistory(w);
     try {
-      const skip = disabledSiteKeys();
-      const res = await api.aggregateSearch(w, skip);
+      const res = await api.aggregateSearch(w);
       // 只保留当前关键词的结果，防止竞态
-      if (get().searchKw === w) set({ searchResults: res, searching: false });
+      if (get().kw === w) set({ results: res, searching: false });
     } catch (e) {
-      if (get().searchKw === w)
-        set({ searchError: String(e), searching: false });
+      if (get().kw === w) set({ error: String(e), searching: false });
     } finally {
-      set({ searchProgress: null });
+      if (get().kw === w) set({ progress: null, searching: false });
     }
   },
-
-  resetSearch: () => {
-    // 只清空搜索结果状态，历史记录保留（历史是持久功能）
-    set({
-      searchKw: "",
-      searchResults: [],
-      searching: false,
-      searchError: "",
-      searchProgress: null,
-    });
-  },
-
-  setSearchProgress: (p) => set({ searchProgress: p }),
-
-  addSearchHistory: (kw) => pushSearchHistory(kw),
-  dropSearchHistory: (kw) => removeSearchHistory(kw),
 }));

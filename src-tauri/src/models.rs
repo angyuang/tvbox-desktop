@@ -2,42 +2,47 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ---------- 宽松反序列化 ----------
-// 大量 CMS 采集站把数值字段输出成字符串（"vod_id":"1"）或把布尔输出成 0/1，
-// 严格类型反序列化会直接报 "error decoding response body"。这里统一做 string-or-number 兼容。
+/// 宽松反序列化：不少采集站把数字字段写成字符串（"vod_id":"123"、"searchable":"1"），
+/// 甚至用布尔值。严格按 i64/i32 解析会整包失败，这里统一兼容。
+mod lenient {
+    use serde::{Deserialize, Deserializer};
 
-/// 宽松整数：接受 number / "number" / bool / null
-pub fn de_flex_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
-    use serde::de::Error;
-    let v = serde_json::Value::deserialize(d)?;
-    match v {
-        serde_json::Value::Number(n) => Ok(n
-            .as_i64()
-            .unwrap_or_else(|| n.as_f64().unwrap_or(0.0).round() as i64)),
-        serde_json::Value::String(s) => Ok(s.trim().parse().unwrap_or_else(|_| {
-            s.trim().parse::<f64>().map(|f| f.round() as i64).unwrap_or(0)
-        })),
-        serde_json::Value::Bool(b) => Ok(if b { 1 } else { 0 }),
-        serde_json::Value::Null => Ok(0),
-        other => Err(D::Error::custom(format!("无法解析为整数: {other}"))),
+    fn num_of(v: &serde_json::Value) -> Option<f64> {
+        match v {
+            serde_json::Value::Number(n) => n.as_f64(),
+            serde_json::Value::String(s) => s.trim().parse().ok(),
+            serde_json::Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+            _ => None,
+        }
     }
-}
 
-/// 宽松 i32（searchable/enabled 等开关字段常被写成 true/false 或 "1"）
-pub fn de_flex_i32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
-    Ok(de_flex_i64(d)? as i32)
-}
+    pub fn de_i64<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        Ok(num_of(&v).map(|f| f as i64).unwrap_or(0))
+    }
 
-/// 宽松字符串：接受 string / number / bool / null
-pub fn de_flex_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    let v = serde_json::Value::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::String(s) => s,
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
-    })
+    pub fn de_i32<'de, D: Deserializer<'de>>(d: D) -> Result<i32, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        Ok(num_of(&v).map(|f| f as i32).unwrap_or(0))
+    }
+
+    pub fn de_opt_i64<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        Ok(if v.is_null() {
+            None
+        } else {
+            num_of(&v).map(|f| f as i64)
+        })
+    }
+
+    pub fn de_opt_i32<'de, D: Deserializer<'de>>(d: D) -> Result<Option<i32>, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        Ok(if v.is_null() {
+            None
+        } else {
+            num_of(&v).map(|f| f as i32)
+        })
+    }
 }
 
 /// 站点配置。type 字段取值混乱（数字 0-4 / 字符串），先用 Value 接收再归一化。
@@ -49,19 +54,19 @@ pub struct SiteConfig {
     pub api: String,
     #[serde(default, rename = "type")]
     pub type_raw: serde_json::Value,
-    #[serde(default, deserialize_with = "de_flex_i32")]
+    #[serde(default, deserialize_with = "lenient::de_i32")]
     pub searchable: i32,
-    #[serde(default, deserialize_with = "de_flex_i32")]
+    #[serde(default, deserialize_with = "lenient::de_i32")]
     pub quick_search: i32,
-    #[serde(default, deserialize_with = "de_flex_i32")]
+    #[serde(default, deserialize_with = "lenient::de_i32")]
     pub filterable: i32,
     #[serde(default)]
     pub categories: Vec<String>,
     #[serde(default)]
     pub header: HashMap<String, String>,
-    #[serde(default, deserialize_with = "de_flex_opt_u64")]
+    #[serde(default)]
     pub timeout: Option<u64>,
-    #[serde(default, deserialize_with = "de_flex_opt_i32")]
+    #[serde(default, deserialize_with = "lenient::de_opt_i32")]
     pub enabled: Option<i32>,
     /// 归一化后的类型：cms | api | html | spider | unknown（由 normalize 填充）
     #[serde(default)]
@@ -186,7 +191,7 @@ pub struct HomeSection {
     pub title: String,
     #[serde(default)]
     pub site: String,
-    #[serde(default, alias = "typeId")]
+    #[serde(default, alias = "typeId", deserialize_with = "lenient::de_opt_i64")]
     pub type_id: Option<i64>,
 }
 
@@ -244,63 +249,41 @@ impl TvboxConfig {
 
 // ---------- CMS 接口响应 ----------
 
-/// Option 字段的宽松反序列化（null / 缺省 / "12" 都能兜住）
-pub fn de_flex_opt_u64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
-    let v: serde_json::Value = serde::Deserialize::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::Null => None,
-        serde_json::Value::Number(n) => n.as_u64(),
-        serde_json::Value::String(s) => s.trim().parse().ok(),
-        _ => None,
-    })
-}
-
-pub fn de_flex_opt_i32<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i32>, D::Error> {
-    let v: serde_json::Value = serde::Deserialize::deserialize(d)?;
-    Ok(match v {
-        serde_json::Value::Null => None,
-        serde_json::Value::Number(n) => n.as_i64().map(|x| x as i32),
-        serde_json::Value::Bool(b) => Some(if b { 1 } else { 0 }),
-        serde_json::Value::String(s) => s.trim().parse().ok(),
-        _ => None,
-    })
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CmsClass {
-    #[serde(default, rename = "type_id", deserialize_with = "de_flex_i64")]
+    #[serde(default, rename = "type_id", deserialize_with = "lenient::de_i64")]
     pub type_id: i64,
-    #[serde(default, rename = "type_name", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "type_name")]
     pub type_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CmsVod {
-    #[serde(default, rename = "vod_id", deserialize_with = "de_flex_i64")]
+    #[serde(default, rename = "vod_id", deserialize_with = "lenient::de_i64")]
     pub vod_id: i64,
-    #[serde(default, rename = "vod_name", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_name")]
     pub vod_name: String,
-    #[serde(default, rename = "vod_pic", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_pic")]
     pub vod_pic: String,
-    #[serde(default, rename = "vod_remarks", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_remarks")]
     pub vod_remarks: String,
-    #[serde(default, rename = "vod_time", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_time")]
     pub vod_time: String,
-    #[serde(default, rename = "vod_play_from", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_play_from")]
     pub vod_play_from: String,
-    #[serde(default, rename = "vod_play_url", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_play_url")]
     pub vod_play_url: String,
-    #[serde(default, rename = "vod_content", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_content")]
     pub vod_content: String,
-    #[serde(default, rename = "type_name", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "type_name")]
     pub type_name: String,
-    #[serde(default, rename = "vod_year", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_year")]
     pub vod_year: String,
-    #[serde(default, rename = "vod_area", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_area")]
     pub vod_area: String,
-    #[serde(default, rename = "vod_actor", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_actor")]
     pub vod_actor: String,
-    #[serde(default, rename = "vod_director", deserialize_with = "de_flex_string")]
+    #[serde(default, rename = "vod_director")]
     pub vod_director: String,
     #[serde(default, rename = "vod_douban_score")]
     pub vod_score: Option<serde_json::Value>,
@@ -308,27 +291,16 @@ pub struct CmsVod {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CmsListResponse {
-    #[serde(default, deserialize_with = "de_flex_i64")]
+    #[serde(default, deserialize_with = "lenient::de_i64")]
     pub page: i64,
-    #[serde(default, deserialize_with = "de_flex_i64")]
+    #[serde(default, deserialize_with = "lenient::de_i64")]
     pub pagecount: i64,
-    #[serde(default, deserialize_with = "de_flex_i64")]
+    #[serde(default, deserialize_with = "lenient::de_i64")]
     pub total: i64,
-    #[serde(default, deserialize_with = "de_null_vec")]
+    #[serde(default)]
     pub list: Vec<CmsVod>,
-    #[serde(default, deserialize_with = "de_null_vec")]
+    #[serde(default)]
     pub class: Vec<CmsClass>,
-}
-
-/// 列表字段为 null 时按空处理（部分站返回 "list": null）
-pub fn de_null_vec<'de, T: serde::de::DeserializeOwned, D: serde::Deserializer<'de>>(
-    d: D,
-) -> Result<Vec<T>, D::Error> {
-    let v: serde_json::Value = serde::Deserialize::deserialize(d)?;
-    match v {
-        serde_json::Value::Null => Ok(vec![]),
-        other => serde_json::from_value(other).map_err(serde::de::Error::custom),
-    }
 }
 
 // ---------- 面向前端的模型 ----------

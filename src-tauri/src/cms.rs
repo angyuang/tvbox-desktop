@@ -101,27 +101,6 @@ pub fn build_cms_url(site: &SiteConfig, ac: &str, t: i64, pg: i64, wd: &str, ids
     join_query(&tpl, &kv)
 }
 
-/// 剥离 JSONP 包裹（如 `callback({...})`）与 UTF-8 BOM，统一成裸 JSON
-fn strip_json_noise(text: &str) -> &str {
-    let mut t = text.trim_start_matches('\u{feff}').trim();
-    // JSONP: 任意标识符( ... ) 结尾可有分号
-    if !t.starts_with('{') && !t.starts_with('[') {
-        if let Some(open) = t.find('(') {
-            let head_ok = open > 0
-                && t[..open]
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '.');
-            if head_ok && t[t.len() - 1..].trim_end().ends_with(')') {
-                let inner = &t[open + 1..];
-                if let Some(end) = inner.rfind(')') {
-                    t = inner[..end].trim();
-                }
-            }
-        }
-    }
-    t
-}
-
 async fn fetch_cms(
     client: &reqwest::Client,
     ua: &str,
@@ -129,16 +108,14 @@ async fn fetch_cms(
     url: &str,
 ) -> AppResult<CmsListResponse> {
     let text = fetch_text(client, url, ua, &site_headers(site), timeout_of(site)).await?;
-    let body = strip_json_noise(&text);
-    if !body.starts_with('{') && !body.starts_with('[') {
-        let preview: String = body.chars().take(80).collect();
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with('{') && !trimmed.starts_with('[') {
         return Err(AppError::Parse(format!(
-            "站点 {} 返回非 JSON（接口可能已失效，返回内容开头为：{}）",
-            site.name,
-            preview.replace('\n', " ")
+            "站点 {} 返回非 JSON（可能接口失效）",
+            site.name
         )));
     }
-    serde_json::from_str::<CmsListResponse>(body)
+    serde_json::from_str::<CmsListResponse>(&text)
         .map_err(|e| AppError::Parse(format!("站点 {} 响应解析失败: {e}", site.name)))
 }
 
@@ -282,11 +259,7 @@ pub fn parse_play_urls(from: &str, urls: &str) -> Vec<PlaySource> {
                 continue;
             }
             let is_web = !is_web_url(&url);
-            episodes.push(Episode {
-                name,
-                url,
-                is_web,
-            });
+            episodes.push(Episode { name, url, is_web });
         }
         if !episodes.is_empty() {
             sources.push(PlaySource { name, episodes });

@@ -3,6 +3,7 @@ use crate::error::{AppError, AppResult};
 use crate::models::*;
 use crate::state::{AppState, RuntimeState};
 use serde::Serialize;
+use tauri::Manager;
 
 #[derive(Serialize, Default)]
 pub struct HomeSectionData {
@@ -242,6 +243,9 @@ pub async fn refresh_subscription(
     } else {
         Err(AppError::msg("订阅源不可刷新（粘贴的配置请删除后重新添加）"))
     }?;
+    // 刷新合并：保留用户手工新增的站点/直播/解析（旧有新无的条目），
+    // 并保留同名站点在设置页的停用状态，避免「刷新后自己加的源被覆盖」
+    let cfg = merge_refreshed(sub.config.clone(), cfg);
     let updated = Subscription {
         updated_at: crate::storage::now(),
         config: cfg,
@@ -256,6 +260,204 @@ pub async fn refresh_subscription(
     })
     .await?;
     Ok(updated)
+}
+
+/// 刷新合并策略：
+/// 1. 新配置里的同名站点保留用户在设置页做的 enabled 停用/启用状态；
+/// 2. 旧配置里存在、新配置里没有的站点/直播/解析（用户新增或上游下架）原样保留；
+/// 3. 其余以上游刷新结果为准。
+fn merge_refreshed(old: TvboxConfig, mut new: TvboxConfig) -> TvboxConfig {
+    let new_keys: std::collections::HashSet<String> =
+        new.sites.iter().map(|s| s.key.clone()).collect();
+    for s in new.sites.iter_mut() {
+        if let Some(o) = old.sites.iter().find(|o| o.key == s.key) {
+            if o.enabled.is_some() {
+                s.enabled = o.enabled;
+            }
+        }
+    }
+    for o in old.sites.iter() {
+        if !new_keys.contains(&o.key) {
+            new.sites.push(o.clone());
+        }
+    }
+    for l in old.lives.iter() {
+        if !new.lives.iter().any(|n| n.name == l.name && n.url == l.url) {
+            new.lives.push(l.clone());
+        }
+    }
+    for p in old.parses.iter() {
+        if !new.parses.iter().any(|n| n.name == p.name && n.url == p.url) {
+            new.parses.push(p.clone());
+        }
+    }
+    new
+}
+
+/// 设置页「影视源」站点启用开关：写入当前生效订阅的 config.sites[].enabled 并持久化
+#[tauri::command]
+pub async fn set_site_enabled(
+    state: tauri::State<'_, AppState>,
+    site_key: String,
+    enabled: bool,
+) -> AppResult<()> {
+    with_runtime(&state, |rt| {
+        let active_id = rt.active_id.clone();
+        let sub = match rt
+            .subscriptions
+            .iter_mut()
+            .find(|s| s.enabled && Some(s.id.as_str()) == active_id.as_deref())
+        {
+            Some(s) => s,
+            None => rt
+                .subscriptions
+                .iter_mut()
+                .find(|s| s.enabled)
+                .ok_or_else(|| AppError::msg("没有启用的订阅"))?,
+        };
+        let site = sub
+            .config
+            .sites
+            .iter_mut()
+            .find(|s| s.key == site_key)
+            .ok_or_else(|| AppError::msg("站点不存在"))?;
+        site.enabled = Some(if enabled { 1 } else { 0 });
+        crate::storage::save_all(&state.data_dir, rt)?;
+        Ok(())
+    })
+    .await
+}
+
+/// 重新加载配置文件（subscriptions.json / settings.json），无需重启应用
+#[tauri::command]
+pub async fn reload_app_state(
+    state: tauri::State<'_, AppState>,
+) -> AppResult<serde_json::Value> {
+    let rt = crate::storage::load_all(&state.data_dir)?;
+    let s = crate::settings::load_settings(&state.data_dir);
+    let n = rt.subscriptions.len();
+    *state.runtime.lock().await = rt;
+    if let Ok(mut cur) = state.settings.write() {
+        *cur = s;
+    }
+    Ok(serde_json::json!({ "subscriptions": n }))
+}
+
+/// 检查更新：请求更新地址，支持 JSON {"version":"x.y.z","notes":"...","url":"下载页"}
+/// 或纯文本版本号两种格式；与当前版本按数字段比较
+#[tauri::command]
+pub async fn check_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    update_url: Option<String>,
+) -> AppResult<serde_json::Value> {
+    let url = update_url
+        .filter(|u| !u.trim().is_empty())
+        .or_else(|| {
+            state
+                .settings
+                .read()
+                .ok()
+                .map(|s| s.update_url.clone())
+                .filter(|u| !u.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            AppError::msg("未配置更新地址：请到 设置 → 通用 → 更新地址 填写，或编辑 settings.json 的 update_url 字段")
+        })?;
+    let url = url.trim().to_string();
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(AppError::msg("更新地址必须是 http(s) 链接"));
+    }
+    let current = app.package_info().version.to_string();
+    let text = crate::http::fetch_text(
+        &state.client,
+        &url,
+        &state.effective_ua(),
+        &Default::default(),
+        15,
+    )
+    .await?;
+    let text = text.trim().to_string();
+    let (latest, notes, download) = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) => {
+            let latest = v
+                .get("version")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if latest.is_empty() {
+                return Err(AppError::msg("更新清单缺少 version 字段"));
+            }
+            let notes = v
+                .get("notes")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let download = v
+                .get("url")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            (latest, notes, download)
+        }
+        Err(_) => (text.clone(), String::new(), String::new()),
+    };
+    let has_update = version_gt(&latest, &current);
+    Ok(serde_json::json!({
+        "current": current,
+        "latest": latest,
+        "hasUpdate": has_update,
+        "notes": notes,
+        "downloadUrl": download,
+        "checkedFrom": url,
+    }))
+}
+
+/// 版本号比较：按 '.' 分段数字比较，非数字段按字符串兜底
+fn version_gt(a: &str, b: &str) -> bool {
+    let pa: Vec<&str> = a.trim().trim_start_matches('v').split('.').collect();
+    let pb: Vec<&str> = b.trim().trim_start_matches('v').split('.').collect();
+    let n = pa.len().max(pb.len());
+    for i in 0..n {
+        let x = pa.get(i).copied().unwrap_or("0");
+        let y = pb.get(i).copied().unwrap_or("0");
+        match (x.parse::<i64>().ok(), y.parse::<i64>().ok()) {
+            (Some(xi), Some(yi)) => {
+                if xi != yi {
+                    return xi > yi;
+                }
+            }
+            _ => {
+                if x != y {
+                    return x > y;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// 用系统浏览器打开链接（下载页 / 更新地址等）
+#[tauri::command]
+pub async fn open_in_browser(app: tauri::AppHandle, url: String) -> AppResult<()> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| AppError::msg(format!("打开链接失败: {e}")))?;
+    Ok(())
+}
+
+/// 切换主窗口深/浅色（Windows 标题栏跟随）
+#[tauri::command]
+pub async fn set_theme(app: tauri::AppHandle, theme: String) -> AppResult<()> {
+    use tauri::utils::Theme;
+    let t = if theme == "light" { Theme::Light } else { Theme::Dark };
+    if let Some(w) = app.get_webview_window("main") {
+        w.set_theme(Some(t))
+            .map_err(|e| AppError::msg(format!("设置窗口主题失败: {e}")))?;
+    }
+    Ok(())
 }
 
 // ---------------- 首页 / 分类 / 详情 ----------------
@@ -394,68 +596,8 @@ pub async fn aggregate_search(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     wd: String,
-    skip: Option<Vec<String>>,
 ) -> AppResult<Vec<SearchResultGroup>> {
-    crate::search::aggregate_search(&app, &state, &wd, skip.as_deref()).await
-}
-
-// ---------------- 站点测速（影视源管理表格） ----------------
-
-#[derive(Serialize, Default)]
-pub struct SiteTestResult {
-    pub ok: bool,
-    pub ms: u64,
-    pub message: String,
-}
-
-/// 轻量连通性测试：请求一次分类接口并计时，供源管理表格批量测试。
-/// 失败原因已按 DNS / TLS / 超时 / HTTP 状态分类，可直接展示。
-#[tauri::command]
-pub async fn test_site(
-    state: tauri::State<'_, AppState>,
-    site_key: String,
-) -> AppResult<SiteTestResult> {
-    let cfg = {
-        let rt = state.runtime.lock().await;
-        state.active_config(&rt)
-    };
-    let site = cfg
-        .as_ref()
-        .and_then(|c| c.sites.iter().find(|s| s.key == site_key))
-        .cloned()
-        .ok_or_else(|| AppError::msg("站点不存在"))?;
-    let ua = state.effective_ua();
-    let timeout = state
-        .settings
-        .read()
-        .map(|s| s.request_timeout.min(15))
-        .unwrap_or(12)
-        .max(5);
-    let start = std::time::Instant::now();
-    let r: AppResult<()> = if site.is_cms() {
-        crate::cms::fetch_categories(&state.client, &ua, &site)
-            .await
-            .map(|_| ())
-    } else if site.kind == "html" {
-        crate::http::fetch_text(&state.client, &site.api, &ua, &Default::default(), timeout)
-            .await
-            .map(|_| ())
-    } else {
-        Err(AppError::msg(site.unsupported_reason.clone()))
-    };
-    let ms = start.elapsed().as_millis() as u64;
-    Ok(match r {
-        Ok(()) => SiteTestResult {
-            ok: true,
-            ms,
-            message: "连接正常".into(),
-        },
-        Err(e) => SiteTestResult {
-            ok: false,
-            ms,
-            message: e.to_string(),
-        },
-    })
+    crate::search::aggregate_search(&app, &state, &wd).await
 }
 
 // ---------------- 直播 ----------------
@@ -602,13 +744,14 @@ pub async fn save_settings(
     Ok(s)
 }
 
-/// 版本 / 数据目录 / 运行环境（关于区展示）
+/// 版本 / 数据目录 / 运行环境（关于区展示）；portable = 是否便携模式（exe 同目录 data 文件夹）
 #[tauri::command]
 pub async fn get_app_info(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> AppResult<serde_json::Value> {
     let version = app.package_info().version.to_string();
     Ok(serde_json::json!({
         "version": version,
         "dataDir": state.data_dir.to_string_lossy(),
+        "portable": state.portable,
         "os": std::env::consts::OS,
         "runtime": "Tauri 2 · Rust · React",
     }))

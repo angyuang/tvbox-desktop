@@ -180,24 +180,30 @@ export interface AppSettings {
   request_timeout: number;
   hide_commentary: boolean;
   density: string; // cozy | compact
-  theme: string; // light | dark | system
   accent: string; // #RRGGBB
   ua: string;
   ext_player: string; // 命令模板，{url} 占位；空 = 自动探测
+  theme: string; // dark（默认）| light，同步窗口标题栏
+  update_url: string; // 检查更新地址（JSON 或纯文本版本号）
   ai: AiSettings;
-}
-
-export interface SiteTestResult {
-  ok: boolean;
-  ms: number;
-  message: string;
 }
 
 export interface AppInfo {
   version: string;
   dataDir: string;
+  /** 是否便携模式：配置保存在 exe 同目录 data 文件夹 */
+  portable: boolean;
   os: string;
   runtime: string;
+}
+
+export interface UpdateCheckResult {
+  current: string;
+  latest: string;
+  hasUpdate: boolean;
+  notes: string;
+  downloadUrl: string;
+  checkedFrom: string;
 }
 
 // 与 Rust room.rs 对齐

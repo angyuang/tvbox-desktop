@@ -15,6 +15,7 @@ import type {
   HomeSectionData,
   AppSettings,
   AppInfo,
+  UpdateCheckResult,
 } from "./types";
 
 export const api = {
@@ -44,10 +45,8 @@ export const api = {
     invoke<PagedVideos>("get_videolist", { siteKey, typeId, page }),
   getDetail: (siteKey: string, vodId: number) =>
     invoke<VideoDetail>("get_detail", { siteKey, vodId }),
-  aggregateSearch: (wd: string, skip?: string[]) =>
-    invoke<SearchResultGroup[]>("aggregate_search", { wd, skip: skip?.length ? skip : null }),
-  testSite: (siteKey: string) =>
-    invoke<{ ok: boolean; ms: number; message: string }>("test_site", { siteKey }),
+  aggregateSearch: (wd: string) =>
+    invoke<SearchResultGroup[]>("aggregate_search", { wd }),
 
   getLiveChannels: () => invoke<LiveChannelGroup[]>("get_live_channels"),
   speedTestLines: (urls: string[]) =>
@@ -80,6 +79,17 @@ export const api = {
     invoke<AppSettings>("save_settings", { settings }),
   getAppInfo: () => invoke<AppInfo>("get_app_info"),
   openDataDir: () => invoke<void>("open_data_dir"),
+
+  // 配置文件 / 更新 / 主题
+  setSiteEnabled: (siteKey: string, enabled: boolean) =>
+    invoke<void>("set_site_enabled", { siteKey, enabled }),
+  reloadAppState: () => invoke<{ subscriptions: number }>("reload_app_state"),
+  checkUpdate: (updateUrl?: string) =>
+    invoke<UpdateCheckResult>("check_update", {
+      updateUrl: updateUrl || null,
+    }),
+  openInBrowser: (url: string) => invoke<void>("open_in_browser", { url }),
+  setTheme: (theme: string) => invoke<void>("set_theme", { theme }),
 
   // 解析接口 / AI 总结
   resolveParse: (parseUrl: string, pageUrl: string) =>

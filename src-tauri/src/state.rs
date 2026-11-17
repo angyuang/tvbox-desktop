@@ -7,6 +7,8 @@ use tokio::sync::Mutex;
 
 pub struct AppState {
     pub data_dir: PathBuf,
+    /// 是否便携模式：exe 同目录存在 data 文件夹（配置随目录迁移）
+    pub portable: bool,
     pub client: reqwest::Client,
     pub runtime: Mutex<RuntimeState>,
     /// 应用设置（设置页修改，settings.json 持久化）。临界区极短，同步 RwLock 足够

@@ -37,8 +37,6 @@ pub struct AppSettings {
     pub hide_commentary: bool,
     /// 界面密度：cozy | compact
     pub density: String,
-    /// 界面主题：light | dark | system（跟随系统）
-    pub theme: String,
     /// 强调色 #RRGGBB
     pub accent: String,
     /// 自定义 User-Agent，留空用内置默认
@@ -46,6 +44,10 @@ pub struct AppSettings {
     /// 外部播放器命令模板，{url} 代表播放地址，空 = 自动探测
     /// 例：C:\Program Files\DAUM\PotPlayer\PotPlayerMini64.exe --fullscreen {url}
     pub ext_player: String,
+    /// 界面主题：dark（默认）| light，同步控制窗口标题栏颜色
+    pub theme: String,
+    /// 检查更新的地址：返回 {"version":"x.y.z","notes":"...","url":"下载页"} 或纯文本版本号
+    pub update_url: String,
     /// AI 总结（OpenAI 兼容接口）
     pub ai: AiSettings,
 }
@@ -57,10 +59,11 @@ impl Default for AppSettings {
             request_timeout: 20,
             hide_commentary: true,
             density: "cozy".into(),
-            theme: "system".into(),
             accent: "#2563eb".into(),
             ua: String::new(),
             ext_player: String::new(),
+            theme: "dark".into(),
+            update_url: String::new(),
             ai: AiSettings::default(),
         }
     }
@@ -83,11 +86,12 @@ impl AppSettings {
         if !self.density.eq("compact") {
             self.density = "cozy".into();
         }
-        if !matches!(self.theme.as_str(), "light" | "dark" | "system") {
-            self.theme = "system".into();
-        }
         let a = self.accent.trim();
         self.accent = if is_hex_color(a) { a.to_lowercase() } else { "#2563eb".into() };
+        if !self.theme.eq("light") {
+            self.theme = "dark".into();
+        }
+        self.update_url = self.update_url.trim().to_string();
         self
     }
 }

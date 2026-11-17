@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { useApp } from "../store";
 import { siteKindOk } from "../types";
-import type { AppInfo, AppSettings } from "../types";
+import type { AppInfo, AppSettings, UpdateCheckResult } from "../types";
 
 // 相对时间：x 分钟前 / x 小时前 / x 天前
 function relTime(ms: number): string {
@@ -38,6 +38,12 @@ export default function Settings() {
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [detected, setDetected] = useState<string[] | null>(null);
   const [showKey, setShowKey] = useState(false);
+  // 检查更新
+  const [checking, setChecking] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [updateErr, setUpdateErr] = useState("");
+  // 重载配置
+  const [reloadingCfg, setReloadingCfg] = useState(false);
 
   useEffect(() => {
     if (settings && !draft) setDraft(settings);
@@ -136,6 +142,35 @@ export default function Settings() {
     const name = window.prompt("修改订阅名称", oldName);
     if (name == null || !name.trim() || name === oldName) return;
     await act(() => api.renameSubscription(id, name.trim()), "重命名失败");
+  };
+
+  // 检查更新：用已保存的 update_url（草稿未保存时提示先保存）
+  const runCheckUpdate = async () => {
+    setChecking(true);
+    setUpdateErr("");
+    setUpdateResult(null);
+    try {
+      const r = await api.checkUpdate();
+      setUpdateResult(r);
+    } catch (e) {
+      setUpdateErr(String(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  // 手工编辑过配置文件后，不重启应用直接重新加载
+  const doReloadCfg = async () => {
+    setReloadingCfg(true);
+    try {
+      await api.reloadAppState();
+      await reloadAll();
+      toast("已重新加载 subscriptions.json / settings.json", "success");
+    } catch (e) {
+      toast(`重新加载失败: ${String(e)}`, "error");
+    } finally {
+      setReloadingCfg(false);
+    }
   };
 
   return (
@@ -345,27 +380,38 @@ export default function Settings() {
               <select
                 className="input"
                 style={{ width: 200 }}
-                value={draft.theme}
+                value={draft.theme === "light" ? "light" : "dark"}
                 onChange={(e) => set({ theme: e.target.value })}
               >
-                <option value="system">跟随系统（推荐）</option>
-                <option value="light">亮色</option>
-                <option value="dark">暗色（深夜模式）</option>
+                <option value="dark">深色（默认）</option>
+                <option value="light">浅色</option>
               </select>
-              <div className="field-hint">侧边栏标题与原生窗口标题栏一起随主题变化</div>
+              <div className="field-hint">保存后立即生效，窗口标题栏颜色同步切换</div>
             </div>
             <div>
               <label className="field-label">强调色</label>
               <div className="row">
                 <input
                   type="color"
-                  className="color-input"
+                  style={{ width: 42, height: 34, border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)" }}
                   value={draft.accent}
                   onChange={(e) => set({ accent: e.target.value })}
                 />
-                <span style={{ fontSize: 13, color: "#6b7280" }}>{draft.accent}</span>
+                <span style={{ fontSize: 13, color: "var(--text2)" }}>{draft.accent}</span>
               </div>
             </div>
+          </div>
+
+          <label className="field-label">更新地址（检查更新用）</label>
+          <input
+            className="input"
+            style={{ marginBottom: 6 }}
+            placeholder="留空 = 不检查；填一个返回版本信息的 http(s) 地址"
+            value={draft.update_url}
+            onChange={(e) => set({ update_url: e.target.value })}
+          />
+          <div className="field-hint" style={{ marginBottom: 14 }}>
+            支持 JSON <code>{'{"version":"1.7.0","notes":"修复xxx","url":"下载页"}'}</code> 或纯文本版本号（如 1.7.0）。也可直接编辑 settings.json 的 update_url 字段。保存后到「关于」点「检查更新」。
           </div>
 
           <div className="row" style={{ marginBottom: 14 }}>
@@ -502,25 +548,89 @@ export default function Settings() {
       {/* ============ 关于 ============ */}
       <div className="section-title" style={{ marginTop: 28 }}>
         <b>关于</b>
+        <span className="section-hint">版本、配置文件位置与更新检查</span>
       </div>
       <div className="card" style={{ padding: 18, marginBottom: 12 }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <tbody>
             <tr>
-              <td className="about-key">版本</td>
-              <td className="about-val">{appInfo?.version ?? "…"}</td>
-            </tr>
-            <tr>
-              <td className="about-key">运行环境</td>
-              <td className="about-val">{appInfo?.runtime ?? "…"} · {appInfo?.os ?? ""}</td>
+              <td className="about-key">当前版本</td>
+              <td className="about-val">
+                <b>{appInfo?.version ?? "…"}</b>
+                <button
+                  className="btn small"
+                  style={{ marginLeft: 12 }}
+                  disabled={checking}
+                  onClick={runCheckUpdate}
+                >
+                  {checking ? "检查中…" : "检查更新"}
+                </button>
+                {updateResult?.hasUpdate && (
+                  <button
+                    className="btn small primary"
+                    style={{ marginLeft: 8 }}
+                    onClick={() =>
+                      api
+                        .openInBrowser(updateResult.downloadUrl || updateResult.checkedFrom)
+                        .catch((e) => toast(String(e), "error"))
+                    }
+                  >
+                    打开下载页
+                  </button>
+                )}
+              </td>
             </tr>
             <tr>
               <td className="about-key">数据目录</td>
               <td className="about-val">
                 <span style={{ wordBreak: "break-all" }}>{appInfo?.dataDir ?? "…"}</span>
-                <button className="btn small" style={{ marginLeft: 10 }} onClick={() => api.openDataDir().catch((e) => toast(String(e), "error"))}>
+                {appInfo?.portable && (
+                  <span className="badge" style={{ marginLeft: 8 }}>
+                    便携模式（程序目录 data 文件夹）
+                  </span>
+                )}
+                <button
+                  className="btn small"
+                  style={{ marginLeft: 10 }}
+                  onClick={() =>
+                    api.openDataDir().catch((e) => toast(String(e), "error"))
+                  }
+                >
                   打开目录
                 </button>
+              </td>
+            </tr>
+            <tr>
+              <td className="about-key">配置文件</td>
+              <td className="about-val">
+                <div style={{ lineHeight: 1.8, fontSize: 13 }}>
+                  <div>
+                    <code>subscriptions.json</code> —— 订阅与站点配置（可在「数据目录」里直接编辑，改完点下面的「重新加载配置」）
+                  </div>
+                  <div>
+                    <code>settings.json</code> —— 应用设置（含 update_url 更新地址、主题、UA、AI Key 等）
+                  </div>
+                  <div>
+                    <code>favorites.json</code> / <code>history.json</code> —— 收藏与观看历史
+                  </div>
+                </div>
+                <button
+                  className="btn small"
+                  style={{ marginTop: 8 }}
+                  disabled={reloadingCfg}
+                  onClick={doReloadCfg}
+                >
+                  {reloadingCfg ? "重载中…" : "重新加载配置"}
+                </button>
+                <span style={{ color: "var(--text3)", fontSize: 12, marginLeft: 10 }}>
+                  手动修改配置文件后无需重启，点此立即生效
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td className="about-key">运行环境</td>
+              <td className="about-val">
+                {appInfo?.runtime ?? "…"} · {appInfo?.os ?? ""}
               </td>
             </tr>
             <tr>
@@ -529,6 +639,40 @@ export default function Settings() {
             </tr>
           </tbody>
         </table>
+
+        {/* 检查更新结果 */}
+        {updateErr && (
+          <div style={{ color: "var(--danger)", fontSize: 13, marginTop: 10 }}>
+            检查更新失败：{updateErr}
+          </div>
+        )}
+        {updateResult && !updateErr && (
+          <div
+            className="card"
+            style={{ marginTop: 12, padding: "12px 14px", background: "var(--accent-soft)", borderColor: "transparent" }}
+          >
+            {updateResult.hasUpdate ? (
+              <div style={{ lineHeight: 1.8 }}>
+                <b>
+                  发现新版本 {updateResult.latest}（当前 {updateResult.current}）
+                </b>
+                {updateResult.notes && (
+                  <div style={{ fontSize: 13, marginTop: 4, whiteSpace: "pre-wrap" }}>
+                    {updateResult.notes}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 4 }}>
+                  请到下载页获取新版安装包；更新地址：{updateResult.checkedFrom}
+                </div>
+              </div>
+            ) : (
+              <div>
+                已是最新版本（当前 {updateResult.current}，远端 {updateResult.latest}）
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="field-hint" style={{ marginTop: 10 }}>
           本软件是纯粹的空壳播放器，不内置、不提供、不分发任何影视内容。请自行添加合法的配置源。
         </div>

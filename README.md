@@ -29,6 +29,15 @@
 | 首页推荐位（tvboxDesktop.home.sections） | ✅ | ✅（无 sections 时自动回退到站点最新列表） |
 | 网页线路嗅探 | ✅（Electron webContents） | ✅ 双通道简易版：HTML 直取正则提取 + Webview hook 窗口（详见下文） |
 | 一键外部播放器 | ✅ | ✅ Rust 直接拉起 PotPlayer / VLC / mpv / IINA（自动探测 + 设置页可指定路径） |
+| 深色/浅色主题（标题栏同步） | ❌ | ✅ 默认深色，设置页切换，Windows 标题栏颜色跟随 |
+| 聚合搜索历史记录 | ❌ | ✅ 最近搜索关键词可点击重搜/删除，最多 20 条持久化 |
+| 聚合搜索结果跨页面保活 | ❌ | ✅ 切页面回来关键词与结果还在，不无谓重搜 |
+| 搜索结果内直接选集播放 | ❌ | ✅ 结果卡片展开片源标签+选集，点击后走与详情页同一条解析管线内嵌播放；嗅探单直链自动选路 |
+| 站点启用开关（亮/灰区分） | ❌ | ✅ 影视源页每个站点独立开关，停用站点不参与搜索/浏览，状态持久化 |
+| 站点批量连通测试 | ❌ | ✅ 并发 4 路逐站显示 ✓/✗/… |
+| 本地播放（本机视频文件） | ❌ | ✅ 选本机视频/音频用内置播放器播，列表本机保存 |
+| 版本号 + 检查更新 | ❌ | ✅ 关于页显示版本，update_url 支持 JSON 清单/纯文本版本号，发现新版可打开下载页 |
+| 配置文件可编辑 + 热重载 | ❌ | ✅ 关于页展示数据目录/四个配置文件，一键打开目录 +「重新加载配置」无需重启；支持便携模式（exe 同目录 data 文件夹） |
 
 ## 技术栈
 
@@ -36,7 +45,7 @@
 - **核心逻辑**：Rust（reqwest + rustls、tokio、scraper、encoding_rs、regex）
 - **前端**：React 18 + TypeScript + Vite 5 + zustand + react-router（Hash 模式）
 - **播放**：ArtPlayer 5 + hls.js 1.5
-- **本地存储**：`app_data_dir` 下 JSON 文件（subscriptions / favorites / history）
+- **本地存储**：`app_data_dir`（或便携模式下的 exe 同目录 `data/`）下的 JSON 文件（subscriptions / favorites / history / settings）
 
 ## 目录结构
 
@@ -49,13 +58,13 @@
 │   ├── types.ts                # 与 Rust serde 模型对齐的类型
 │   ├── store.ts                # zustand 全局状态 + toast
 │   ├── components/             # Sidebar / PosterCard / Player(ArtPlayer+hls.js)
-│   └── pages/                  # Home / Sources / Search / Detail / Live / Favorites / History / Settings
+│   └── pages/                  # Home / Sources / Search / Detail / Live / LocalPlay / Favorites / History / Settings
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json         # 窗口/打包/图标配置（NSIS + dmg + deb/appimage）
 │   ├── capabilities/default.json
 │   └── src/
-│       ├── lib.rs              # 装配 + 25 个 command 注册
+│       ├── lib.rs              # 装配 + 38 个 command 注册 + 便携模式数据目录解析
 │       ├── models.rs           # TVBox 配置 serde 模型（A/B 双格式）
 │       ├── cms.rs              # 苹果CMS v10 JSON 客户端 + 播放地址解析（含单元测试）
 │       ├── htmlsite.rs         # 网页规则站 CSS 选择器搜索
@@ -105,6 +114,28 @@ Rust 端单元测试（CMS 地址构造 / 播放地址解析 / 直播解析）�
 cd src-tauri && cargo test
 ```
 
+## 数据目录与配置文件（支持便携模式）
+
+应用启动时按以下顺序决定配置目录：
+
+1. **便携模式**：若 exe 同目录存在 `data` 文件夹，所有配置都存在 `data/` 里，可随目录整体拷贝、直接编辑；
+2. 否则用系统数据目录：Windows 为 `%APPDATA%\com.tvbox.desktop`，macOS 为 `~/Library/Application Support/com.tvbox.desktop`，Linux 为 `~/.local/share/com.tvbox.desktop`。
+
+目录内文件：
+
+| 文件 | 内容 |
+| --- | --- |
+| `subscriptions.json` | 订阅列表与站点配置（active_id / subscriptions） |
+| `settings.json` | 应用设置（主题、强调色、UA、update_url 更新地址、AI Key 等） |
+| `favorites.json` / `history.json` | 收藏 / 观看历史 |
+
+设置 → 关于 页可以看到实际路径、一键「打开目录」，并提供「重新加载配置」按钮：手工修改 JSON 保存后点击即可生效，无需重启应用。
+
+「检查更新」使用的更新地址（settings.json 的 `update_url`）支持两种格式：
+
+- JSON 清单：`{"version":"1.7.0","notes":"修复说明","url":"下载页链接"}`
+- 纯文本：直接返回版本号（如 `1.7.0`）
+
 ## 配置格式
 
 完整兼容原项目两种格式：
@@ -140,47 +171,105 @@ cd src-tauri && cargo test
 ## 订阅源说明
 **本项目为壳项目不内置订阅源**
 如有需求请自行收集[苹果CMSV10(MACcmsV10)](https://github.com/magicblack/maccms10)源，[参考源](https://github.com/hafrey1/LunaTV-config)
-## 源路径 
-
+## 苹果cmsv10（MACcmsv10）源路径 
+> windows文件路径：C:\Users\用户名\AppData\Roaming\com.tvbox.desktop\subscriptions.json
 ```json
 {
-  "format": "tvbox-desktop/1",
-  "name": "公开可用源（苹果CMS 采集站）",
-  "note": "改写自 hgtuj5688/tvbox-desktop 的 samples/public-sources.json（MIT）。实测存活的公开采集接口，全部是标准苹果CMS v10 的 /api.php/provide/vod。这类站点随时可能失效，失效后在设置页刷新或删除即可，可参考hafrey1/LunaTV-config",
-  "sites": [
+  "active_id": null,
+  "subscriptions": [
     {
-      "key": "xxx",
-      "name": "xxx资源",
-      "type": "cms",
-      "api": "https://api.xxxx.com/api.php/provide/vod",
-      "searchable": 1
-    },
-    {
-      "key": "yyy",
-      "name": "yyy资源",
-      "type": "cms",
-      "api": "https://cj.yyy.com/api.php/provide/vod",
-      "searchable": 1
+      "id": "builtin:public-sources",
+      "name": "内置推荐订阅（公开采集站）",
+      "url": "builtin:public-sources",
+      "created_at": 1794894800672,
+      "updated_at": 1794894800672,
+      "enabled": true,
+      "config": {
+        "format": "tvbox-desktop/1",
+        "name": "公开可用源（苹果CMS 采集站）",
+        "sites": [
+          {
+            "key": "aexample",
+            "name": "aexample资源",
+            "api": "https://api.aexample.com/api.php/provide/vod",
+            "type": "cms",
+            "searchable": 1,
+            "quick_search": 0,
+            "filterable": 0,
+            "categories": [],
+            "header": {},
+            "timeout": null,
+            "enabled": null,
+            "kind": "cms",
+            "rules": null,
+            "unsupported_reason": ""
+          },
+          {
+            "key": "bexample",
+            "name": "bexample资源",
+            "api": "https://cj.bexample.com/api.php/provide/vod",
+            "type": "cms",
+            "searchable": 1,
+            "quick_search": 0,
+            "filterable": 0,
+            "categories": [],
+            "header": {},
+            "timeout": null,
+            "enabled": null,
+            "kind": "cms",
+            "rules": null,
+            "unsupported_reason": ""
+          }
+        ],
+        "lives": [
+          {
+            "name": "公开直播源·IPv4（txt）",
+            "url": "https://live.cexample.top/tv/iptv4.txt",
+            "type": 0,
+            "groups": []
+          }
+        ],
+        "parses": [],
+        "headers": [],
+        "tvboxDesktop": {
+          "accent": null,
+          "density": null,
+          "home": {
+            "sections": [
+              {
+                "title": "电影 · 最近更新",
+                "site": "dyttzy",
+                "type_id": null
+              },
+              {
+                "title": "电影 · 动作片",
+                "site": "ffzy",
+                "type_id": 6
+              },
+              {
+                "title": "电视剧 · 国产剧",
+                "site": "lzi",
+                "type_id": 13
+              },
+              {
+                "title": "动漫 · 日本",
+                "site": "guangsu",
+                "type_id": 42
+              },
+              {
+                "title": "综艺 · 最近更新",
+                "site": "subo",
+                "type_id": null
+              }
+            ]
+          }
+        },
+        "spider": null,
+        "wallpaper": null,
+        "warningText": null
+      }
     }
-  ],
-  "lives": [
-    {
-      "name": "公开直播源·IPv4（txt）",
-      "type": 0,
-      "url": "https://live.xxx.top/tv/iptv4.txt"
-    }
-  ],
-  "tvboxDesktop": {
-    "home": {
-      "sections": [
-        { "title": "电影 · 最近更新", "site": "xxx" },
-        { "title": "电影 · 动作片", "site": "yyy", "typeId": 6 },
-        { "title": "电视剧 · 国产剧", "site": "zzz", "typeId": 13 },
-        { "title": "动漫 · 日本", "site": "aaa", "typeId": 42 },
-        { "title": "综艺 · 最近更新", "site": "bbb" }
-      ]
-    }
-  }
+  ]
 }
 
 ```

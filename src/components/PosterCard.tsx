@@ -9,9 +9,11 @@ interface Props {
   showSite?: boolean;
   progress?: HistoryItem; // 历史进度（可选）
   width?: number;
+  /** 自定义点击行为（不传则跳详情页） */
+  onClick?: () => void;
 }
 
-export default function PosterCard({ card, showSite, progress, width }: Props) {
+export default function PosterCard({ card, showSite, progress, width, onClick }: Props) {
   const nav = useNavigate();
   const pct =
     progress && progress.duration_sec > 0
@@ -22,7 +24,7 @@ export default function PosterCard({ card, showSite, progress, width }: Props) {
     <div
       className="poster-card"
       style={width ? { width, flexShrink: 0 } : undefined}
-      onClick={() => nav(`/detail/${card.site_key}/${card.vod_id}`)}
+      onClick={onClick ?? (() => nav(`/detail/${card.site_key}/${card.vod_id}`))}
       title={card.name}
     >
       {card.pic ? (

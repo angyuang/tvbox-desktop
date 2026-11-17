@@ -52,13 +52,12 @@ async fn search_site(
     }
 }
 
-/// 聚合搜索：active 订阅下所有 searchable 站点并发搜索（可传 skip 跳过停用站点）。
+/// 聚合搜索：active 订阅下所有 searchable 站点并发搜索。
 /// 每完成一个站点 emit "search:progress" { done, total, site_key, ok, count }。
 pub async fn aggregate_search(
     app: &tauri::AppHandle,
     state: &AppState,
     wd: &str,
-    skip: Option<&[String]>,
 ) -> AppResult<Vec<SearchResultGroup>> {
     let wd = wd.trim().to_string();
     if wd.is_empty() {
@@ -75,10 +74,6 @@ pub async fn aggregate_search(
         .sites
         .into_iter()
         .filter(|s| s.is_searchable())
-        .filter(|s| {
-            // 影视源页停用的站点不参与搜索
-            !skip.map(|list| list.iter().any(|k| k == &s.key)).unwrap_or(false)
-        })
         .collect();
     let total = sites.len();
     let (concurrency, timeout_secs, ua) = {
