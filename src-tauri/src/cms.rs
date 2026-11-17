@@ -115,8 +115,26 @@ async fn fetch_cms(
             site.name
         )));
     }
-    serde_json::from_str::<CmsListResponse>(&text)
-        .map_err(|e| AppError::Parse(format!("站点 {} 响应解析失败: {e}", site.name)))
+    let parse_err = |e: serde_json::Error| {
+        AppError::Parse(format!("站点 {} 响应解析失败: {e}", site.name))
+    };
+    match serde_json::from_str::<CmsListResponse>(&text) {
+        Ok(r) => Ok(r),
+        Err(e) => {
+            // 宽松兜底：部分站点会包一层 JSONP / 前后附加提示文本 / 尾部分号，
+            // 截取最外层大括号（中括号）再试一次
+            let start = text.find('{').or_else(|| text.find('['));
+            let end = text.rfind('}').or_else(|| text.rfind(']'));
+            if let (Some(a), Some(b)) = (start, end) {
+                if a < b {
+                    if let Ok(r) = serde_json::from_str::<CmsListResponse>(&text[a..=b]) {
+                        return Ok(r);
+                    }
+                }
+            }
+            Err(parse_err(e))
+        }
+    }
 }
 
 fn vod_to_card(site: &SiteConfig, v: CmsVod) -> VideoCard {

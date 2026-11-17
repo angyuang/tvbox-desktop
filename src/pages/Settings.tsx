@@ -345,13 +345,17 @@ export default function Settings() {
               <select
                 className="input"
                 style={{ width: 200 }}
-                value={draft.theme === "dark" ? "dark" : "light"}
+                value={draft.theme || "light"}
                 onChange={(e) => set({ theme: e.target.value })}
               >
                 <option value="light">浅色（默认）</option>
-                <option value="dark">深色（夜间护眼）</option>
+                <option value="dark">深色</option>
+                <option value="night">深夜黑（纯黑 OLED）</option>
+                <option value="system">跟随系统</option>
               </select>
-              <div className="field-hint">深色主题全局生效，含海报页与播放页</div>
+              <div className="field-hint">
+                深色/深夜黑全局生效，应用标题与系统标题栏会同步变暗；跟随系统随操作系统昼夜自动切换
+              </div>
             </div>
             <div>
               <label className="field-label">强调色</label>

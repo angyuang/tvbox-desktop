@@ -1,61 +1,54 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import PosterCard from "../components/PosterCard";
-import { api, EVENTS, onEvent } from "../api";
+import { EVENTS, onEvent } from "../api";
 import { useApp } from "../store";
-import type { SearchResultGroup, VideoCard } from "../types";
-
-interface ProgressInfo {
-  done: number;
-  total: number;
-  siteKey: string;
-  siteName: string;
-  ok: boolean;
-  count: number;
-}
+import type { VideoCard } from "../types";
+import type { SearchProgressInfo } from "../store";
 
 export default function Search() {
-  const { settings } = useApp();
+  const {
+    settings,
+    searchKw,
+    searchResults,
+    searching,
+    searchError,
+    searchProgress,
+    lastSearched,
+    runSearch,
+    clearSearch,
+  } = useApp();
   const [params] = useSearchParams();
-  const [kw, setKw] = useState(params.get("q") ?? "");
-  const [results, setResults] = useState<SearchResultGroup[]>([]);
-  const [progress, setProgress] = useState<ProgressInfo | null>(null);
-  const [searching, setSearching] = useState(false);
-  const [error, setError] = useState("");
+  // 输入框本地草稿：优先 URL 参数，其次上次搜索词
+  const [kw, setKw] = useState(() => params.get("q") ?? searchKw ?? "");
+  const [progress, setProgress] = useState<SearchProgressInfo | null>(null);
   const kwRef = useRef("");
 
-  const doSearch = useCallback(async (word: string) => {
+  // 仅当 URL 里的关键词与已搜索的不同时才真正发起搜索；
+  // 从详情页返回（同关键词）时直接显示上次结果，不发请求。
+  useEffect(() => {
+    const q = (params.get("q") ?? "").trim();
+    if (q && q !== lastSearched && !useApp.getState().searching) {
+      kwRef.current = q;
+      void runSearch(q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params]);
+
+  const doSearch = (word: string) => {
     const w = word.trim();
     if (!w) return;
     kwRef.current = w;
-    setResults([]);
-    setError("");
-    setSearching(true);
-    setProgress(null);
-    try {
-      const res = await api.aggregateSearch(w);
-      // 只保留当前关键词的结果，防止竞态
-      if (kwRef.current === w) setResults(res);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSearching(false);
-      setProgress(null);
-    }
-  }, []);
+    void runSearch(w);
+  };
 
-  // 初始自动搜索
-  useEffect(() => {
-    const q = params.get("q");
-    if (q) doSearch(q);
-  }, [params, doSearch]);
-
-  // 进度事件
+  // 进度事件（写入本地 + 全局：中途离开再回来也能看到进度）
   useEffect(() => {
     let un: (() => void) | undefined;
-    onEvent<ProgressInfo>(EVENTS.SEARCH_PROGRESS, (p) => setProgress(p)).then(
-      (f) => (un = f)
-    );
+    onEvent<SearchProgressInfo>(EVENTS.SEARCH_PROGRESS, (p) => {
+      setProgress(p);
+      useApp.setState({ searchProgress: p });
+    }).then((f) => (un = f));
     return () => un?.();
   }, []);
 
@@ -66,11 +59,13 @@ export default function Search() {
       ? items.filter((c) => !commentaryRe.test(c.name + c.remarks))
       : items;
 
+  const showProgress = searching ? progress ?? searchProgress : null;
+
   return (
     <div>
       <h1 className="page-title">聚合搜索</h1>
       <p className="page-desc">
-        并发搜索当前订阅下所有可搜索站点（CMS / 网页规则站），超时站点自动跳过
+        并发搜索当前订阅下所有可搜索站点（CMS / 网页规则站），超时站点自动跳过；进入详情页再返回不会丢失结果
       </p>
 
       <div className="row" style={{ marginBottom: 18 }}>
@@ -90,21 +85,33 @@ export default function Search() {
         >
           {searching ? "搜索中…" : "聚合搜索"}
         </button>
-        {searching && progress && (
+        {lastSearched && !searching && (
+          <button
+            className="btn small"
+            onClick={() => {
+              clearSearch();
+              setKw("");
+            }}
+            title="清空当前搜索结果"
+          >
+            清空结果
+          </button>
+        )}
+        {showProgress && (
           <span className="search-progress" style={{ marginBottom: 0 }}>
-            {progress.done}/{progress.total} · {progress.siteName}{" "}
-            {progress.ok ? `找到 ${progress.count} 条` : "失败/超时"}
+            {showProgress.done}/{showProgress.total} · {showProgress.siteName}{" "}
+            {showProgress.ok ? `找到 ${showProgress.count} 条` : "失败/超时"}
           </span>
         )}
       </div>
 
-      {error && (
+      {searchError && (
         <div className="toast-error" style={{ color: "var(--danger)", marginBottom: 14 }}>
-          搜索失败：{error}
+          搜索失败：{searchError}
         </div>
       )}
 
-      {results.map((g) => {
+      {searchResults.map((g) => {
         const items = filterItems(g.items);
         return (
           <div className="search-group" key={g.site_key}>
@@ -136,10 +143,10 @@ export default function Search() {
         );
       })}
 
-      {!searching && results.length === 0 && !error && (
+      {!searching && searchResults.length === 0 && !searchError && (
         <div className="empty">输入关键词开始聚合搜索</div>
       )}
-      {searching && results.length === 0 && (
+      {searching && searchResults.length === 0 && (
         <div className="loading">正在并发查询各站点…</div>
       )}
     </div>

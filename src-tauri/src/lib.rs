@@ -31,6 +31,12 @@ pub fn run() {
             let client = reqwest::Client::builder()
                 .user_agent(USER_AGENT)
                 .timeout(Duration::from_secs(25))
+                // 连接超时独立于总超时：失败站点尽快暴露，不拖满整个超时
+                .connect_timeout(Duration::from_secs(10))
+                // 采集站普遍证书不规范（自签名/过期/链不全），且部分老服务器 HTTP/2 兼容差
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true)
+                .http1_only()
                 .redirect(reqwest::redirect::Policy::limited(8))
                 .build()?;
             let runtime: RuntimeState = storage::load_all(&data_dir)?;
@@ -79,6 +85,10 @@ pub fn run() {
             commands::sniff_page,
             commands::open_sniffer,
             commands::close_sniffer,
+            commands::test_site,
+            commands::set_site_enabled,
+            commands::set_all_sites_enabled,
+            commands::set_window_theme,
         ])
         .run(tauri::generate_context!())
         .expect("TVBox Desktop 启动失败");

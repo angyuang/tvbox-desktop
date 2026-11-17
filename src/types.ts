@@ -180,11 +180,18 @@ export interface AppSettings {
   request_timeout: number;
   hide_commentary: boolean;
   density: string; // cozy | compact
-  theme: string; // light | dark
+  theme: string; // light | dark | night | system
   accent: string; // #RRGGBB
   ua: string;
   ext_player: string; // 命令模板，{url} 占位；空 = 自动探测
   ai: AiSettings;
+}
+
+// 单站点连通性测试结果（影视源表格）
+export interface SiteTestResult {
+  ok: boolean;
+  ms: number;
+  message: string;
 }
 
 export interface AppInfo {

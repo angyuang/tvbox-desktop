@@ -15,6 +15,7 @@ import type {
   HomeSectionData,
   AppSettings,
   AppInfo,
+  SiteTestResult,
 } from "./types";
 
 export const api = {
@@ -90,6 +91,18 @@ export const api = {
     actor: string;
     content: string;
   }) => invoke<string>("ai_summary", args),
+
+  // 影视源表格：单站测试 / 站点开关 / 一键全部启用禁用
+  testSite: (siteKey: string) =>
+    invoke<SiteTestResult>("test_site", { siteKey }),
+  setSiteEnabled: (siteKey: string, enabled: boolean) =>
+    invoke<void>("set_site_enabled", { siteKey, enabled }),
+  setAllSitesEnabled: (enabled: boolean) =>
+    invoke<void>("set_all_sites_enabled", { enabled }),
+
+  // 同步原生窗口主题（暗色时标题栏一起变暗）
+  setWindowTheme: (theme: string) =>
+    invoke<void>("set_window_theme", { theme }),
 };
 
 export type Unlisten = () => void;

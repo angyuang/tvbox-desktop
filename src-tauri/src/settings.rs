@@ -37,7 +37,7 @@ pub struct AppSettings {
     pub hide_commentary: bool,
     /// 界面密度：cozy | compact
     pub density: String,
-    /// 主题：light | dark
+    /// 主题：light | dark | night | system
     pub theme: String,
     /// 强调色 #RRGGBB
     pub accent: String,
@@ -83,7 +83,7 @@ impl AppSettings {
         if !self.density.eq("compact") {
             self.density = "cozy".into();
         }
-        if !self.theme.eq("dark") {
+        if !matches!(self.theme.as_str(), "dark" | "night" | "system") {
             self.theme = "light".into();
         }
         let a = self.accent.trim();

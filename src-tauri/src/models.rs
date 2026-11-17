@@ -15,7 +15,12 @@ pub mod flex {
                 .as_i64()
                 .or_else(|| n.as_f64().map(|f| f as i64))
                 .unwrap_or(0),
-            serde_json::Value::String(s) => s.trim().parse::<i64>().unwrap_or(0),
+            serde_json::Value::String(s) => {
+                let t = s.trim();
+                t.parse::<i64>()
+                    .or_else(|_| t.parse::<f64>().map(|f| f as i64))
+                    .unwrap_or(0)
+            }
             serde_json::Value::Bool(b) => *b as i64,
             _ => 0,
         }
@@ -59,6 +64,39 @@ pub mod flex {
             ref other => Some(value_to_i64(other).max(0) as u64),
         })
     }
+
+    /// 字符串字段：接受 "abc" / 123 / true，其余归空串
+    /// （部分站点把 vod_time 返回成时间戳数字、vod_year 返回成数字）
+    pub fn string_flex<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+        let v = serde_json::Value::deserialize(d)?;
+        Ok(match v {
+            serde_json::Value::String(s) => s,
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            _ => String::new(),
+        })
+    }
+
+    /// null -> 默认值（部分站点返回 "list": null）
+    pub fn null_to_default<'de, D, T>(d: D) -> Result<T, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: Deserialize<'de> + Default,
+    {
+        let v = Option::<T>::deserialize(d)?;
+        Ok(v.unwrap_or_default())
+    }
+
+    /// 站点数组容忍：单个站点条目非法（如字符串/缺字段）时跳过，不炸掉整份配置
+    pub fn tolerant_sites<'de, D: Deserializer<'de>>(
+        d: D,
+    ) -> Result<Vec<super::SiteConfig>, D::Error> {
+        let v: Vec<serde_json::Value> = Vec::deserialize(d)?;
+        Ok(v.into_iter()
+            .filter(|item| item.is_object())
+            .filter_map(|item| serde_json::from_value::<super::SiteConfig>(item).ok())
+            .collect())
+    }
 }
 
 /// 站点配置。type 字段取值混乱（数字 0-4 / 字符串），先用 Value 接收再归一化。
@@ -80,7 +118,7 @@ pub struct SiteConfig {
     pub quick_search: i32,
     #[serde(default, deserialize_with = "flex::i32_flex")]
     pub filterable: i32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flex::null_to_default")]
     pub categories: Vec<String>,
     #[serde(default)]
     pub header: HashMap<String, String>,
@@ -237,7 +275,7 @@ pub struct TvboxConfig {
     pub format: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flex::tolerant_sites")]
     pub sites: Vec<SiteConfig>,
     #[serde(default)]
     pub lives: Vec<LiveGroup>,
@@ -305,6 +343,31 @@ mod tests {
         assert_eq!(s.filterable, 1);
         assert_eq!(s.kind, "cms");
     }
+
+    /// vod_time 时间戳数字 / vod_year 数字、"list": null 也要能解析
+    #[test]
+    fn test_cms_response_numeric_strings_and_null_list() {
+        let text = r#"{"page":1,"pagecount":"1","total":"3","list":null,"class":null}"#;
+        let r: CmsListResponse = serde_json::from_str(text).unwrap();
+        assert!(r.list.is_empty());
+        assert!(r.class.is_empty());
+
+        let text2 = r#"{"page":"1","list":[{"vod_id":12,"vod_name":"片名","vod_time":1730000000,"vod_year":2025,"vod_score":"8.5"}]}"#;
+        let r2: CmsListResponse = serde_json::from_str(text2).unwrap();
+        assert_eq!(r2.list[0].vod_time, "1730000000");
+        assert_eq!(r2.list[0].vod_year, "2025");
+        assert_eq!(r2.list[0].vod_name, "片名");
+    }
+
+    /// 站点条目里混入非法项（字符串/缺字段对象）时跳过，不炸整份配置
+    #[test]
+    fn test_tolerant_sites() {
+        let text = r#"{"sites":[{"key":"a","name":"A","type":3,"api":"https://x/vod"},"csp_XXX",{},{ "key":"b","name":"B","type":"cms","api":"https://y/vod","searchable":1}]}"#;
+        let cfg: TvboxConfig = serde_json::from_str(text).unwrap();
+        let keys: Vec<&str> = cfg.sites.iter().map(|s| s.key.as_str()).collect();
+        assert_eq!(keys, vec!["a", "b"]);
+        assert_eq!(cfg.sites[1].kind, "cms");
+    }
 }
 
 // ---------- CMS 接口响应 ----------
@@ -313,7 +376,7 @@ mod tests {
 pub struct CmsClass {
     #[serde(default, rename = "type_id", deserialize_with = "flex::i64_flex")]
     pub type_id: i64,
-    #[serde(default, rename = "type_name")]
+    #[serde(default, rename = "type_name", deserialize_with = "flex::string_flex")]
     pub type_name: String,
 }
 
@@ -321,29 +384,29 @@ pub struct CmsClass {
 pub struct CmsVod {
     #[serde(default, rename = "vod_id", deserialize_with = "flex::i64_flex")]
     pub vod_id: i64,
-    #[serde(default, rename = "vod_name")]
+    #[serde(default, rename = "vod_name", deserialize_with = "flex::string_flex")]
     pub vod_name: String,
-    #[serde(default, rename = "vod_pic")]
+    #[serde(default, rename = "vod_pic", deserialize_with = "flex::string_flex")]
     pub vod_pic: String,
-    #[serde(default, rename = "vod_remarks")]
+    #[serde(default, rename = "vod_remarks", deserialize_with = "flex::string_flex")]
     pub vod_remarks: String,
-    #[serde(default, rename = "vod_time")]
+    #[serde(default, rename = "vod_time", deserialize_with = "flex::string_flex")]
     pub vod_time: String,
-    #[serde(default, rename = "vod_play_from")]
+    #[serde(default, rename = "vod_play_from", deserialize_with = "flex::string_flex")]
     pub vod_play_from: String,
-    #[serde(default, rename = "vod_play_url")]
+    #[serde(default, rename = "vod_play_url", deserialize_with = "flex::string_flex")]
     pub vod_play_url: String,
-    #[serde(default, rename = "vod_content")]
+    #[serde(default, rename = "vod_content", deserialize_with = "flex::string_flex")]
     pub vod_content: String,
-    #[serde(default, rename = "type_name")]
+    #[serde(default, rename = "type_name", deserialize_with = "flex::string_flex")]
     pub type_name: String,
-    #[serde(default, rename = "vod_year")]
+    #[serde(default, rename = "vod_year", deserialize_with = "flex::string_flex")]
     pub vod_year: String,
-    #[serde(default, rename = "vod_area")]
+    #[serde(default, rename = "vod_area", deserialize_with = "flex::string_flex")]
     pub vod_area: String,
-    #[serde(default, rename = "vod_actor")]
+    #[serde(default, rename = "vod_actor", deserialize_with = "flex::string_flex")]
     pub vod_actor: String,
-    #[serde(default, rename = "vod_director")]
+    #[serde(default, rename = "vod_director", deserialize_with = "flex::string_flex")]
     pub vod_director: String,
     #[serde(default, rename = "vod_douban_score")]
     pub vod_score: Option<serde_json::Value>,
@@ -357,9 +420,9 @@ pub struct CmsListResponse {
     pub pagecount: i64,
     #[serde(default, deserialize_with = "flex::i64_flex")]
     pub total: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flex::null_to_default")]
     pub list: Vec<CmsVod>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "flex::null_to_default")]
     pub class: Vec<CmsClass>,
 }
 

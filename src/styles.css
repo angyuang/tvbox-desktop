@@ -13,7 +13,7 @@
   --radius: 12px;
 }
 
-/* ---------- 深色主题 ---------- */
+/* ---------- 深色 / 深夜黑主题 ---------- */
 html[data-theme="dark"] {
   --bg: #12151a;
   --card: #1a1f26;
@@ -23,25 +23,91 @@ html[data-theme="dark"] {
   --text3: #6b7480;
   color-scheme: dark;
 }
-html[data-theme="dark"] .poster-card:hover {
+/* 深夜黑（OLED 纯黑）：在深色基础上压得更暗 */
+html[data-theme="night"] {
+  --bg: #000000;
+  --card: #0b0d10;
+  --border: #1e2128;
+  --text: #d7dae0;
+  --text2: #8f97a3;
+  --text3: #5c636e;
+  color-scheme: dark;
+}
+html[data-theme="dark"] .poster-card:hover,
+html[data-theme="night"] .poster-card:hover {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
   border-color: #3a424e;
 }
-html[data-theme="dark"] .poster-card .cover { background: #232830; }
-html[data-theme="dark"] .poster-card .cover-empty {
-  background: linear-gradient(135deg, #232a38, #1c2330);
+html[data-theme="dark"] .poster-card .cover,
+html[data-theme="night"] .poster-card .cover { background: #232830; }
+html[data-theme="dark"] .poster-card .cover-empty,
+html[data-theme="night"] .poster-card .cover-empty {
+  background: linear-gradient(135deg, #1c2230, #171c26);
   color: #3f5180;
 }
-html[data-theme="dark"] .poster-card .site-badge {
+html[data-theme="dark"] .poster-card .site-badge,
+html[data-theme="night"] .poster-card .site-badge {
   background: rgba(26, 31, 38, 0.92);
 }
-html[data-theme="dark"] .detail-poster { background: #232830; }
-html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #3a424e; }
-html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #4a5361; }
-html[data-theme="dark"] .toggle { background: #3a424e; }
-html[data-theme="dark"] .sub-item .badge.gray { background: #232830; }
-html[data-theme="dark"] .toast { background: rgba(46, 53, 64, 0.96); }
-html[data-theme="dark"] .player-box { background: #000; border: 1px solid #2a313b; }
+html[data-theme="dark"] .detail-poster,
+html[data-theme="night"] .detail-poster { background: #232830; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb,
+html[data-theme="night"] ::-webkit-scrollbar-thumb { background: #3a424e; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover,
+html[data-theme="night"] ::-webkit-scrollbar-thumb:hover { background: #4a5361; }
+html[data-theme="dark"] .toggle,
+html[data-theme="night"] .toggle { background: #3a424e; }
+html[data-theme="dark"] .sub-item .badge.gray,
+html[data-theme="night"] .sub-item .badge.gray { background: #232830; }
+html[data-theme="dark"] .toast,
+html[data-theme="night"] .toast { background: rgba(46, 53, 64, 0.96); }
+html[data-theme="dark"] .player-box,
+html[data-theme="night"] .player-box { background: #000; border: 1px solid #2a313b; }
+
+/* ---------- 影视源站点表格 ---------- */
+.site-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 640px;
+}
+.site-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text3);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.site-table td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.site-table tr:last-child td { border-bottom: none; }
+.site-table tr:hover td { background: rgba(127, 138, 160, 0.06); }
+.site-table tr.disabled td { opacity: 0.55; }
+.site-table .site-name { font-weight: 600; max-width: 200px; }
+.site-table .site-host {
+  color: var(--text3);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.site-table .muted { color: var(--text3); font-size: 12px; }
+.site-table .ms-ok { color: var(--ok); font-weight: 600; }
+.site-table .ms-fail {
+  color: var(--danger);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+  display: inline-block;
+  vertical-align: middle;
+}
 
 * { box-sizing: border-box; }
 
