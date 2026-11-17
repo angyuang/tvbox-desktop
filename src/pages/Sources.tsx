@@ -132,7 +132,7 @@ export default function Sources() {
                   </span>
                 </div>
                 {!ok && (
-                  <div style={{ fontSize: 11, color: "#9ca3af", padding: "0 10px 6px 22px" }}>
+                  <div style={{ fontSize: 11, color: "var(--text3)", padding: "0 10px 6px 22px" }}>
                     {s.unsupported_reason}
                   </div>
                 )}
@@ -150,7 +150,7 @@ export default function Sources() {
                 {testing === curSite.key ? "测试中…" : "测试连通"}
               </button>
               {curSite.kind === "html" && (
-                <span style={{ color: "#9ca3af", fontSize: 12 }}>
+                <span style={{ color: "var(--text3)", fontSize: 12 }}>
                   网页规则站仅支持聚合搜索，不支持分类浏览
                 </span>
               )}
@@ -184,7 +184,7 @@ export default function Sources() {
                 <button className="btn" disabled={page <= 1} onClick={() => switchPage(page - 1)}>
                   上一页
                 </button>
-                <span style={{ color: "#6b7280", fontSize: 13 }}>
+                <span style={{ color: "var(--text2)", fontSize: 13 }}>
                   第 {data.page} / {pages} 页 · 共 {data.total} 部
                 </span>
                 <button className="btn" disabled={page >= pages} onClick={() => switchPage(page + 1)}>

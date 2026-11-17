@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../store";
 import { api } from "../api";
@@ -5,6 +6,11 @@ import { api } from "../api";
 export default function History() {
   const nav = useNavigate();
   const { history, reloadHistory, toast } = useApp();
+
+  // 进入页面时重新拉取：播放中每 8 秒才写一次历史，store 里的启动快照可能已过期
+  useEffect(() => {
+    reloadHistory();
+  }, [reloadHistory]);
 
   return (
     <div>

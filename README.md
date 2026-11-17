@@ -1,7 +1,6 @@
 # TVBox Desktop（Tauri 2 重写版）
 
-原 [hgtuj5688/tvbox-desktop](https://github.com/hgtuj5688/tvbox-desktop)（Electron 44 + React 19）的**全功能对齐重写版**：使用 GLM-5.3-Flash编写,架构采取**Tauri 2 + Rust + React 18 + TypeScript**，目标是更小的安装包（约 10MB 级别 vs Electron 100MB+）、更低的内存占用与三平台原生打包。
-# 如有侵权联系必删除
+原 [hgtuj5688/tvbox-desktop](https://github.com/hgtuj5688/tvbox-desktop)（Electron 44 + React 19）的**全功能对齐重写版**：使用 **Tauri 2 + Rust + React 18 + TypeScript**，目标是更小的安装包（约 10MB 级别 vs Electron 100MB+）、更低的内存占用与三平台原生打包。
 
 > 本项目遵循原项目 MIT 协议，内置订阅示例改写自原项目 `samples/public-sources.json` 并注明出处。
 
@@ -134,11 +133,14 @@ cd src-tauri && cargo test
   }
 }
 ```
+# **如有侵权联系必删除**
 # **支持正版，反对盗版**
 
 ## 订阅源说明
 **本项目为壳项目不内置订阅源**
 如有需求请自行收集[苹果CMSV10(MACcmsV10)](https://github.com/magicblack/maccms10)源，[参考源](https://github.com/hafrey1/LunaTV-config)
+## 源路径 
+
 ```json
 {
   "format": "tvbox-desktop/1",
@@ -181,7 +183,6 @@ cd src-tauri && cargo test
 }
 
 ```
-
 站点类型对照（与原项目 README 一致）：
 
 | type | 含义 | 桌面端 |

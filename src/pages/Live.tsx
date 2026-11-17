@@ -164,7 +164,7 @@ export default function Live() {
             ) : (
               <div
                 className="card"
-                style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "#9ca3af" }}
+                style={{ aspectRatio: "16/9", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)" }}
               >
                 左侧选择频道开始播放
               </div>
@@ -175,7 +175,7 @@ export default function Live() {
                 <div className="row" style={{ marginTop: 12 }}>
                   <b style={{ fontSize: 15 }}>{ch.name}</b>
                   {lines.length > 1 && (
-                    <span style={{ color: "#6b7280", fontSize: 12 }}>
+                    <span style={{ color: "var(--text2)", fontSize: 12 }}>
                       {lines.length} 条线路
                     </span>
                   )}

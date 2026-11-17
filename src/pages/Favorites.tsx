@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "../store";
 import { api } from "../api";
@@ -5,6 +6,11 @@ import { api } from "../api";
 export default function Favorites() {
   const nav = useNavigate();
   const { favorites, reloadFavorites, toast } = useApp();
+
+  // 进入页面时重新拉取，避免显示启动时的过期快照
+  useEffect(() => {
+    reloadFavorites();
+  }, [reloadFavorites]);
 
   return (
     <div>

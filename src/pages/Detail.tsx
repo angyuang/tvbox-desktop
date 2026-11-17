@@ -94,7 +94,6 @@ export default function Detail() {
         } else {
           setPlayUrl(url);
         }
-        setStartPos((p) => p); // 保持
       } catch (e) {
         toast(`播放地址解析失败: ${String(e)}`, "error");
       }
@@ -150,6 +149,8 @@ export default function Detail() {
     if (!ep) return;
     setSourceIdx(si);
     setEpIdx(ei);
+    // 手动切集时清除历史起播位置，避免新集从旧位置开始
+    setStartPos(0);
     setFoundLinks([]);
     if (ep.is_web) {
       setSniffing(true);
@@ -196,6 +197,26 @@ export default function Detail() {
       resolveAndPlay(ep.url, ep.name);
     } else {
       setPlayUrl(ep.url);
+    }
+  };
+
+  // 上/下一集
+  const stepEpisode = (delta: number) => {
+    if (!detail) return;
+    const { sourceIdx: si, epIdx: ei } = curRef.current;
+    const s = detail.sources[si];
+    if (!s || ei < 0) return;
+    const ni = Math.min(s.episodes.length - 1, Math.max(0, ei + delta));
+    if (ni !== ei) playEpisode(si, ni);
+  };
+
+  // 复制直链
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(playUrl);
+      toast("已复制播放地址", "success");
+    } catch {
+      toast("复制失败，请手动选择地址复制", "error");
     }
   };
 
@@ -253,6 +274,120 @@ export default function Detail() {
   if (!detail) return <div className="empty">详情加载失败，请重试</div>;
 
   const src = detail.sources[sourceIdx];
+  const curEp = src?.episodes[epIdx];
+
+  // 海报 + 收藏（两种布局共用）
+  const posterBlock = (
+    <div>
+      {detail.pic ? (
+        <img className="detail-poster" src={detail.pic} alt={detail.name} />
+      ) : (
+        <div className="detail-poster" />
+      )}
+      <button
+        className="btn"
+        style={{ marginTop: 12, width: "100%" }}
+        onClick={toggleFav}
+      >
+        {isFav ? "★ 已收藏（点击取消）" : "☆ 收藏"}
+      </button>
+    </div>
+  );
+
+  // 影片元信息（不含选集区）
+  const infoBlock = (
+    <div className="detail-info">
+      <h2>{detail.name}</h2>
+      <div className="tags">
+        {detail.type_name && <span className="tag">{detail.type_name}</span>}
+        {detail.year && <span className="tag">{detail.year}</span>}
+        {detail.area && <span className="tag">{detail.area}</span>}
+        {detail.remarks && <span className="tag">{detail.remarks}</span>}
+        {detail.score && !["0", "0.0"].includes(detail.score) && (
+          <span className="tag">★ {detail.score}</span>
+        )}
+      </div>
+      {detail.actor && <div className="desc">演员：{detail.actor}</div>}
+      {detail.director && <div className="desc">导演：{detail.director}</div>}
+      {detail.content && <div className="desc">{detail.content}</div>}
+    </div>
+  );
+
+  // 嗅探直链选择（播放视图内展示）
+  const sniffCard = (sniffing || foundLinks.length > 0) && (
+    <div className="card" style={{ marginTop: 14, padding: 16 }}>
+      <div className="row" style={{ marginBottom: 10 }}>
+        <b>嗅探结果</b>
+        {sniffing && (
+          <span style={{ color: "var(--text2)" }}>嗅探中…</span>
+        )}
+        <div className="spacer" />
+        <button
+          className="btn small"
+          onClick={() => {
+            setFoundLinks([]);
+            api.closeSniffer().catch(() => undefined);
+          }}
+        >
+          关闭
+        </button>
+      </div>
+      {foundLinks.length === 0 ? (
+        <div className="loading" style={{ padding: 14 }}>
+          正在嗅探网页线路，若窗口打开请等待页面播放出现直链…
+        </div>
+      ) : (
+        foundLinks.map((u, i) => (
+          <div key={i} className="row" style={{ marginBottom: 8 }}>
+            <div
+              className="ep-btn"
+              style={{
+                flex: 1,
+                minWidth: 0,
+                textAlign: "left",
+                padding: "10px 12px",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              onClick={() => {
+                setPlayUrl(u);
+                setFoundLinks([]);
+                api.closeSniffer().catch(() => undefined);
+              }}
+            >
+              ▶ 内置播放：{u}
+            </div>
+            <button className="btn small" onClick={() => openExternal(u, toast)}>
+              外部播放
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+
+  const aiCards = (
+    <>
+      {aiBusy && (
+        <div className="card ai-card" style={{ marginTop: 12 }}>
+          AI 正在生成这一集的剧情梗概…（首次调用可能需要几十秒）
+        </div>
+      )}
+      {aiText && (
+        <div className="card ai-card" style={{ marginTop: 12 }}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <b>AI 剧情梗概</b>
+            <div className="spacer" />
+            <button className="btn small" onClick={() => setAiText("")}>
+              收起
+            </button>
+          </div>
+          <div style={{ lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{aiText}</div>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div>
@@ -260,50 +395,79 @@ export default function Detail() {
         <button className="btn small" onClick={() => window.history.back()}>
           ← 返回
         </button>
-        <span style={{ color: "#6b7280", fontSize: 13 }}>
+        <span style={{ color: "var(--text2)", fontSize: 13 }}>
           来源：{detail.site_name}
         </span>
       </div>
 
-      <div className="detail-layout">
-        <div>
-          {detail.pic ? (
-            <img className="detail-poster" src={detail.pic} alt={detail.name} />
-          ) : (
-            <div className="detail-poster" />
-          )}
-          <button
-            className="btn"
-            style={{ marginTop: 12, width: "100%" }}
-            onClick={toggleFav}
-          >
-            {isFav ? "★ 已收藏（点击取消）" : "☆ 收藏"}
-          </button>
-        </div>
-
-        <div>
-          <div className="detail-info">
-            <h2>{detail.name}</h2>
-            <div className="tags">
-              {detail.type_name && <span className="tag">{detail.type_name}</span>}
-              {detail.year && <span className="tag">{detail.year}</span>}
-              {detail.area && <span className="tag">{detail.area}</span>}
-              {detail.remarks && <span className="tag">{detail.remarks}</span>}
-              {detail.score && !["0", "0.0"].includes(detail.score) && (
-                <span className="tag">★ {detail.score}</span>
-              )}
+      {playUrl && src ? (
+        /* ============ 播放视图：播放器在上，选集面板在右（同页内嵌，不弹窗） ============ */
+        <div className="play-layout">
+          <div className="play-main">
+            <Player
+              url={playUrl}
+              poster={detail.pic}
+              startPos={startPos}
+              onProgress={handleProgress}
+            />
+            <div className="row" style={{ flexWrap: "wrap", marginTop: 4 }}>
+              <button
+                className="btn small"
+                disabled={epIdx <= 0}
+                onClick={() => stepEpisode(-1)}
+                title="上一集"
+              >
+                ◀ 上一集
+              </button>
+              <button
+                className="btn small"
+                disabled={epIdx < 0 || epIdx >= src.episodes.length - 1}
+                onClick={() => stepEpisode(1)}
+                title="下一集"
+              >
+                下一集 ▶
+              </button>
+              <span className="play-now">
+                正在播放：{src.name} · {curEp?.name ?? ""}
+              </span>
+              <div className="spacer" />
+              <button
+                className="btn small"
+                disabled={aiBusy}
+                onClick={runAiSummary}
+                title="把片名/集名/类型/年份/演员/简介发给已配置的 AI 模型，生成本集剧情梗概（设置页配置 API Key）"
+              >
+                {aiBusy ? "AI 总结中…" : "AI 总结本集"}
+              </button>
+              <button
+                className="btn small"
+                onClick={() => openExternal(playUrl, toast)}
+                title="用 PotPlayer / VLC / mpv 打开当前直链（命令可在设置页配置）"
+              >
+                外部播放
+              </button>
+              <button className="btn small" onClick={copyUrl}>
+                复制地址
+              </button>
             </div>
-            {detail.actor && (
-              <div className="desc">演员：{detail.actor}</div>
-            )}
-            {detail.director && (
-              <div className="desc">导演：{detail.director}</div>
-            )}
-            {detail.content && <div className="desc">{detail.content}</div>}
+            <div className="play-url" title={playUrl}>
+              直链：{playUrl}
+            </div>
+
+            {sniffCard}
+            {aiCards}
           </div>
 
-          <div className="episodes">
-            <div className="src-tabs">
+          <aside className="play-side card">
+            <div className="side-title">
+              选集
+              {detail.sources.length > 1 && (
+                <span style={{ color: "var(--text3)", fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+                  点下方片源标签可切换
+                </span>
+              )}
+            </div>
+            <div className="src-tabs" style={{ marginBottom: 10 }}>
               {detail.sources.map((s, i) => (
                 <span
                   key={s.name + i}
@@ -313,130 +477,74 @@ export default function Detail() {
                   {s.name}（{s.episodes.length}集）
                 </span>
               ))}
-              {detail.sources.length === 0 && (
-                <span style={{ color: "#9ca3af" }}>没有可播放的选集</span>
-              )}
             </div>
-
-            {src && (
-              <div className="ep-grid">
-                {src.episodes.map((ep, ei) => (
+            <div className="ep-grid">
+              {src.episodes.map((ep, ei) => (
+                <span
+                  key={ei}
+                  className={`ep-btn ${ei === epIdx ? "active" : ""}`}
+                  onClick={() => playEpisode(sourceIdx, ei)}
+                  title={ep.is_web ? "网页线路：点击嗅探直链" : ep.url}
+                >
+                  {ep.is_web && <span className="web-flag">嗅</span>}
+                  {ep.name}
+                </span>
+              ))}
+            </div>
+          </aside>
+        </div>
+      ) : (
+        /* ============ 未播放：海报 + 简介 + 选集 ============ */
+        <div className="detail-layout">
+          {posterBlock}
+          <div>
+            {infoBlock}
+            <div className="episodes">
+              <div className="src-tabs">
+                {detail.sources.map((s, i) => (
                   <span
-                    key={ei}
-                    className={`ep-btn ${ei === epIdx ? "active" : ""}`}
-                    onClick={() => playEpisode(sourceIdx, ei)}
-                    title={ep.is_web ? "网页线路：点击嗅探直链" : ep.url}
+                    key={s.name + i}
+                    className={`chip ${i === sourceIdx ? "active" : ""}`}
+                    onClick={() => setSourceIdx(i)}
                   >
-                    {ep.is_web && <span className="web-flag">嗅</span>}
-                    {ep.name}
+                    {s.name}（{s.episodes.length}集）
                   </span>
                 ))}
+                {detail.sources.length === 0 && (
+                  <span style={{ color: "var(--text3)" }}>没有可播放的选集</span>
+                )}
               </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 嗅探直链选择 */}
-      {(sniffing || foundLinks.length > 0) && (
-        <div className="card" style={{ marginTop: 18, padding: 16 }}>
-          <div className="row" style={{ marginBottom: 10 }}>
-            <b>嗅探结果</b>
-            {sniffing && <span style={{ color: "#6b7280" }}>嗅探中…</span>}
-            <div className="spacer" />
-            <button
-              className="btn small"
-              onClick={() => {
-                setFoundLinks([]);
-                api.closeSniffer().catch(() => undefined);
-              }}
-            >
-              关闭
-            </button>
-          </div>
-          {foundLinks.length === 0 ? (
-            <div className="loading" style={{ padding: 14 }}>
-              正在嗅探网页线路，若窗口打开请等待页面播放出现直链…
-            </div>
-          ) : (
-            foundLinks.map((u, i) => (
-              <div key={i} className="row" style={{ marginBottom: 8 }}>
-                <div
-                  className="ep-btn"
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    textAlign: "left",
-                    padding: "10px 12px",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                  onClick={() => {
-                    setPlayUrl(u);
-                    setFoundLinks([]);
-                    api.closeSniffer().catch(() => undefined);
-                  }}
-                >
-                  ▶ 内置播放：{u}
+              {src && (
+                <div className="ep-grid">
+                  {src.episodes.map((ep, ei) => (
+                    <span
+                      key={ei}
+                      className={`ep-btn ${ei === epIdx ? "active" : ""}`}
+                      onClick={() => playEpisode(sourceIdx, ei)}
+                      title={ep.is_web ? "网页线路：点击嗅探直链" : ep.url}
+                    >
+                      {ep.is_web && <span className="web-flag">嗅</span>}
+                      {ep.name}
+                    </span>
+                  ))}
                 </div>
-                <button className="btn small" onClick={() => openExternal(u, toast)}>
-                  外部播放
-                </button>
-              </div>
-            ))
-          )}
+              )}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* 播放器 */}
+      {/* 播放时的影片信息卡（海报 + 简介；选集已在右侧面板） */}
       {playUrl && (
-        <div style={{ marginTop: 20 }}>
-          <div className="row" style={{ marginBottom: 8 }}>
-            <b>正在播放</b>
-            <div className="spacer" />
-            <button
-              className="btn small"
-              disabled={aiBusy}
-              onClick={runAiSummary}
-              title="把片名/集名/类型/年份/演员/简介发给已配置的 AI 模型，生成本集剧情梗概（设置页配置 API Key）"
-            >
-              {aiBusy ? "AI 总结中…" : "AI 总结本集"}
-            </button>
-            <button
-              className="btn small"
-              onClick={() => openExternal(playUrl, toast)}
-              title="用 PotPlayer / VLC / mpv 打开当前直链（命令可在设置页配置）"
-            >
-              用外部播放器打开
-            </button>
-          </div>
-          <Player
-            url={playUrl}
-            poster={detail.pic}
-            startPos={startPos}
-            onProgress={handleProgress}
-          />
-          {aiBusy && (
-            <div className="card ai-card" style={{ marginTop: 12 }}>
-              AI 正在生成这一集的剧情梗概…（首次调用可能需要几十秒）
-            </div>
-          )}
-          {aiText && (
-            <div className="card ai-card" style={{ marginTop: 12 }}>
-              <div className="row" style={{ marginBottom: 8 }}>
-                <b>AI 剧情梗概</b>
-                <div className="spacer" />
-                <button className="btn small" onClick={() => setAiText("")}>
-                  收起
-                </button>
-              </div>
-              <div style={{ lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{aiText}</div>
-            </div>
-          )}
-          <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 8 }}>
-            观看进度每 8 秒自动保存；网页线路（选集右上角标“嗅”）会先嗅探直链再播放，嗅探不到时依次尝试解析接口，也可一键交给外部播放器。
-          </div>
+        <div className="detail-layout play-info-card">
+          {posterBlock}
+          {infoBlock}
+        </div>
+      )}
+
+      {playUrl && (
+        <div style={{ color: "var(--text3)", fontSize: 12, marginTop: 8 }}>
+          观看进度每 8 秒自动保存；网页线路（选集右上角标“嗅”）会先嗅探直链再播放，嗅探不到时依次尝试解析接口，也可一键交给外部播放器。
         </div>
       )}
     </div>

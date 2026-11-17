@@ -214,7 +214,7 @@ export default function Settings() {
               <div className="url" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.url}>
                 {s.url}
               </div>
-              <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 2 }}>
+              <div style={{ color: "var(--text3)", fontSize: 12, marginTop: 2 }}>
                 同步：{relTime(s.updated_at)}
               </div>
             </div>
@@ -251,7 +251,7 @@ export default function Settings() {
         <span className="section-hint">{activeCfg?.parses?.length ?? 0} 条</span>
       </div>
       <div className="card" style={{ padding: 18, marginBottom: 12 }}>
-        <div style={{ color: "#6b7280", fontSize: 13, lineHeight: 1.7 }}>
+        <div style={{ color: "var(--text2)", fontSize: 13, lineHeight: 1.7 }}>
           有些采集站给的线路不是直链，而是一个分享页地址。播放时会<b>先自己读一遍那个页面</b>
           （简易嗅探），读不出来才按下面的顺序依次解析接口；失败的接口本轮会排到后面。
           接口来自当前激活订阅的 <code>parses</code> 字段。
@@ -341,15 +341,28 @@ export default function Settings() {
               </select>
             </div>
             <div>
+              <label className="field-label">主题</label>
+              <select
+                className="input"
+                style={{ width: 200 }}
+                value={draft.theme === "dark" ? "dark" : "light"}
+                onChange={(e) => set({ theme: e.target.value })}
+              >
+                <option value="light">浅色（默认）</option>
+                <option value="dark">深色（夜间护眼）</option>
+              </select>
+              <div className="field-hint">深色主题全局生效，含海报页与播放页</div>
+            </div>
+            <div>
               <label className="field-label">强调色</label>
               <div className="row">
                 <input
                   type="color"
-                  style={{ width: 42, height: 34, border: "1px solid #e5e7eb", borderRadius: 8, background: "#fff" }}
+                  style={{ width: 42, height: 34, border: "1px solid var(--border)", borderRadius: 8, background: "var(--card)" }}
                   value={draft.accent}
                   onChange={(e) => set({ accent: e.target.value })}
                 />
-                <span style={{ fontSize: 13, color: "#6b7280" }}>{draft.accent}</span>
+                <span style={{ fontSize: 13, color: "var(--text2)" }}>{draft.accent}</span>
               </div>
             </div>
           </div>
@@ -402,7 +415,7 @@ export default function Settings() {
               检测本机播放器
             </button>
             {detected && (
-              <span style={{ fontSize: 13, color: "#6b7280" }}>
+              <span style={{ fontSize: 13, color: "var(--text2)" }}>
                 {detected.length === 0 ? "未检测到已知播放器，请手动填写命令" : `检测到 ${detected.length} 个：${detected.join("；")}`}
               </span>
             )}
@@ -466,7 +479,7 @@ export default function Settings() {
               borderRadius: 10,
               padding: "10px 14px",
               fontSize: 13,
-              color: "#374151",
+              color: "var(--text2)",
             }}
           >
             点播放页的「AI 总结本集」时，会把片名、集名、类型、年份、演员和站点简介发给模型，用来生成这一集的剧情梗概。不会发送播放地址，也不会在后台自动调用。

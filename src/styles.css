@@ -1,4 +1,4 @@
-/* TVBox Desktop 重写版 —— 纯白极简风 */
+/* TVBox Desktop 重写版 —— 纯白极简风（支持深色主题） */
 :root {
   --bg: #f7f8fa;
   --card: #ffffff;
@@ -12,6 +12,36 @@
   --ok: #16a34a;
   --radius: 12px;
 }
+
+/* ---------- 深色主题 ---------- */
+html[data-theme="dark"] {
+  --bg: #12151a;
+  --card: #1a1f26;
+  --border: #2a313b;
+  --text: #e6e9ee;
+  --text2: #9aa3af;
+  --text3: #6b7480;
+  color-scheme: dark;
+}
+html[data-theme="dark"] .poster-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  border-color: #3a424e;
+}
+html[data-theme="dark"] .poster-card .cover { background: #232830; }
+html[data-theme="dark"] .poster-card .cover-empty {
+  background: linear-gradient(135deg, #232a38, #1c2330);
+  color: #3f5180;
+}
+html[data-theme="dark"] .poster-card .site-badge {
+  background: rgba(26, 31, 38, 0.92);
+}
+html[data-theme="dark"] .detail-poster { background: #232830; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #3a424e; }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #4a5361; }
+html[data-theme="dark"] .toggle { background: #3a424e; }
+html[data-theme="dark"] .sub-item .badge.gray { background: #232830; }
+html[data-theme="dark"] .toast { background: rgba(46, 53, 64, 0.96); }
+html[data-theme="dark"] .player-box { background: #000; border: 1px solid #2a313b; }
 
 * { box-sizing: border-box; }
 
@@ -324,6 +354,43 @@ textarea.input { width: 100%; min-height: 120px; resize: vertical; font-family: 
   border-radius: var(--radius);
   overflow: hidden;
   margin-bottom: 16px;
+}
+
+/* ---------- 播放视图（选集后切换：播放器 + 右侧选集面板） ---------- */
+.play-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+.play-main { min-width: 0; }
+.play-side {
+  padding: 14px;
+  position: sticky;
+  top: 0;
+}
+.play-side .side-title {
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.play-side .ep-grid {
+  max-height: 55vh;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+}
+.play-now { color: var(--text2); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.play-url {
+  color: var(--text3);
+  font-size: 12px;
+  margin-top: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.play-info-card { margin-top: 20px; }
+@media (max-width: 1020px) {
+  .play-layout { grid-template-columns: 1fr; }
+  .play-side { position: static; }
 }
 
 /* ---------- 直播 ---------- */

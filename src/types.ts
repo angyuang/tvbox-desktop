@@ -180,6 +180,7 @@ export interface AppSettings {
   request_timeout: number;
   hide_commentary: boolean;
   density: string; // cozy | compact
+  theme: string; // light | dark
   accent: string; // #RRGGBB
   ua: string;
   ext_player: string; // 命令模板，{url} 占位；空 = 自动探测

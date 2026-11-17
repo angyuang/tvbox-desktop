@@ -1,15 +1,12 @@
 # 更新日志
 
-## 1.2.1（2026-11-16）
+## 1.3.0（2026-11-16）
 
-修复一批 Rust 编译错误，本次已通过 `cargo check --all-targets` 全量真实验证（192 个依赖 + 全部自研代码，零错误零警告）：
-
-- 修复：`ai.rs` E0599 —— 代码使用 `.json()` 但 reqwest 未启用 `json` feature（`Cargo.toml` 补齐）
-- 修复：`parse.rs` E0282 —— 删除从未使用、类型无法推断的死变量 `headers`
-- 修复：`cms.rs` E0308 —— `apply_template(tpl, ...)` 的 `String` 参数改为借用 `&tpl`
-- 修复：`cms.rs` E0382 —— 选集解析先计算 `is_web` 再把 `url` move 进结构体
-- 清理：`parse.rs` / `commands.rs` 未用导入，`search.rs` 死常量改接设置默认并发数，`models.rs` 驼峰字段 `warningText` 补 `#[allow(non_snake_case)]`
-- 版本号统一 1.2.1（此前 CHANGELOG 与 Cargo.toml / tauri.conf.json / package.json 不一致）
+- 修复：CMS 响应解析报 `invalid type: string "1", expected i64`——电影天堂、非凡等采集站返回的 `page`/`pagecount`/`total`/`vod_id`/`type_id` 是字符串数字，现全字段宽容解析（数字/字符串/布尔/null 均接受），订阅配置里的 `"searchable":"1"` 同样兼容；附 3 个回归单测
+- 新增：深色主题。设置页 → 通用 → 主题选「深色」，保存后全局生效（侧边栏/海报页/播放页/弹层全部适配），强调色在深色下自动提高对比度
+- 改进：详情页选集后切换为播放视图——播放器在上方、选集面板在右侧（对齐原版布局），新增上一集/下一集按钮、复制地址；播放仍在同一页面内完成，不再需要滚到页底找播放器；修复手动切集误从历史位置起播的问题
+- 修复：观看历史播放后不显示——历史/收藏页进入时重新拉取（原先只在应用启动时读一次快照）
+- 修复：一批 Rust 编译错误（1.2.1 遗留）：reqwest 缺 json feature、parse.rs 死变量、cms.rs 两处借用错误、未用导入与死常量清理
 
 ## 1.2.0（2026-11-16）
 

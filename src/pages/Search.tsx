@@ -99,7 +99,7 @@ export default function Search() {
       </div>
 
       {error && (
-        <div className="toast-error" style={{ color: "#dc2626", marginBottom: 14 }}>
+        <div className="toast-error" style={{ color: "var(--danger)", marginBottom: 14 }}>
           搜索失败：{error}
         </div>
       )}
