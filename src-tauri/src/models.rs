@@ -314,6 +314,9 @@ pub struct VideoCard {
     pub pic: String,
     pub remarks: String,
     pub time: String,
+    /// 评分（CMS 列表接口的 vod_douban_score，可能为空；聚合搜索合并卡片展示用）
+    #[serde(default)]
+    pub score: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

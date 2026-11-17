@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { api } from "../api";
 import { useApp } from "../store";
-import PosterCard from "../components/PosterCard";
-import { siteIsCms, siteKindOk } from "../types";
-import type { CmsClass, PagedVideos, SiteConfig } from "../types";
+import { siteKindOk } from "../types";
+import type { SiteConfig } from "../types";
 
-type TestState = "testing" | "ok" | "fail";
+// 站点测速状态：ok + 延迟毫秒（复用直播线路测速 speed_test_lines，GET Range 探测）
+interface SpeedState {
+  testing: boolean;
+  ok: boolean;
+  ms: number; // -1 = 失败
+}
 
 // 站点启用开关：开 = 主题色高亮，关 = 灰色，一眼区分
 function SiteToggle({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -27,125 +31,141 @@ export default function Sources() {
   const { state, toast, reloadState } = useApp();
   const sites: SiteConfig[] = state?.activeConfig?.sites ?? [];
 
-  const [current, setCurrent] = useState<string>("");
-  const [classes, setClasses] = useState<CmsClass[]>([]);
-  const [classId, setClassId] = useState<number>(0);
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<PagedVideos | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [testing, setTesting] = useState<string>("");
+  // 筛选：搜索名称/key/接口 + 类型 + 只看已启用
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState<"all" | "cms" | "html">("all");
+  const [onlyEnabled, setOnlyEnabled] = useState(false);
 
-  // 批量连通测试：站点 key -> 测试状态
-  const [testMap, setTestMap] = useState<Record<string, TestState>>({});
+  // 测速：站点 key -> 状态（并发 4 路）
+  const [speedMap, setSpeedMap] = useState<Record<string, SpeedState>>({});
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchDone, setBatchDone] = useState(0);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [busyToggles, setBusyToggles] = useState(false);
 
   const siteEnabled = (s: SiteConfig) => s.enabled == null || s.enabled !== 0;
 
-  const curSite = sites.find((s) => s.key === current);
-
-  // 默认选中第一个可用且启用的 CMS 站点
-  useEffect(() => {
-    if (!current && sites.length) {
-      const okSites = sites.filter(siteEnabled);
-      const target = okSites.find(siteIsCms) ?? okSites.find(siteKindOk);
-      if (target) setCurrent(target.key);
-    }
+  const filtered = useMemo(() => {
+    const kw = q.trim().toLowerCase();
+    return sites.filter((s) => {
+      if (kw) {
+        const hay = `${s.name} ${s.key} ${s.api}`.toLowerCase();
+        if (!hay.includes(kw)) return false;
+      }
+      if (kind === "cms" && !siteKindOk(s)) return false;
+      if (kind === "html" && s.kind !== "html") return false;
+      if (onlyEnabled && !siteEnabled(s)) return false;
+      return true;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sites]);
+  }, [sites, q, kind, onlyEnabled]);
 
-  const loadList = useCallback(
-    async (siteKey: string, typeId: number, pg: number) => {
-      setLoading(true);
-      setData(null);
+  // 测一个站点：GET Range 探测接口地址，报告延迟
+  const testSite = useCallback(
+    async (site: SiteConfig) => {
+      setSpeedMap((m) => ({
+        ...m,
+        [site.key]: { testing: true, ok: false, ms: -1 },
+      }));
       try {
-        setData(await api.getVideolist(siteKey, typeId, pg));
-      } catch (e) {
-        toast(String(e), "error");
-      } finally {
-        setLoading(false);
+        const res = await api.speedTestLines([site.api]);
+        const r = res[0];
+        setSpeedMap((m) => ({
+          ...m,
+          [site.key]: {
+            testing: false,
+            ok: !!r?.ok,
+            ms: r?.delay_ms ?? -1,
+          },
+        }));
+      } catch {
+        setSpeedMap((m) => ({
+          ...m,
+          [site.key]: { testing: false, ok: false, ms: -1 },
+        }));
       }
     },
-    [toast]
+    []
   );
 
-  // 切站点 -> 拉分类
-  useEffect(() => {
-    if (!curSite || !siteIsCms(curSite)) {
-      setClasses([]);
-      return;
-    }
-    (async () => {
-      try {
-        const cls = await api.getCategories(curSite.key);
-        setClasses(cls);
-        const first = cls[0]?.type_id ?? 0;
-        setClassId(first);
-        setPage(1);
-        loadList(curSite.key, first, 1);
-      } catch (e) {
-        setClasses([]);
-        toast(`站点 ${curSite.name} 拉取分类失败: ${String(e)}`, "error");
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [curSite?.key]);
-
-  const switchClass = (id: number) => {
-    if (!curSite) return;
-    setClassId(id);
-    setPage(1);
-    loadList(curSite.key, id, 1);
-  };
-
-  const switchPage = (pg: number) => {
-    if (!curSite || !data) return;
-    setPage(pg);
-    loadList(curSite.key, classId, pg);
-    document.querySelector(".main")?.scrollTo({ top: 0 });
-  };
-
-  const testSite = async (site: SiteConfig) => {
-    setTesting(site.key);
-    try {
-      await api.getCategories(site.key);
-      toast(`站点「${site.name}」连接正常`, "success");
-    } catch (e) {
-      toast(`站点「${site.name}」测试失败: ${String(e)}`, "error");
-    } finally {
-      setTesting("");
-    }
-  };
-
-  // 批量测试：并发 4 路，逐个显示状态
-  const batchTest = async () => {
-    const targets = sites.filter(siteKindOk);
-    if (targets.length === 0) return;
-    setBatchRunning(true);
-    setBatchDone(0);
-    setTestMap(Object.fromEntries(targets.map((s) => [s.key, "testing"])));
-    const queue = [...targets];
-    let done = 0;
-    const worker = async () => {
-      while (queue.length > 0) {
-        const s = queue.shift()!;
-        try {
-          await api.getCategories(s.key);
-          setTestMap((m) => ({ ...m, [s.key]: "ok" }));
-        } catch {
-          setTestMap((m) => ({ ...m, [s.key]: "fail" }));
+  // 批量测速：并发 4 路，逐个显示
+  const batchTest = useCallback(
+    async (list: SiteConfig[]) => {
+      const targets = list.filter(siteKindOk);
+      if (targets.length === 0) return;
+      setBatchRunning(true);
+      setBatchDone(0);
+      setBatchTotal(targets.length);
+      setSpeedMap((m) => {
+        const next = { ...m };
+        for (const s of targets) next[s.key] = { testing: true, ok: false, ms: -1 };
+        return next;
+      });
+      const queue = [...targets];
+      let done = 0;
+      const worker = async () => {
+        while (queue.length > 0) {
+          const s = queue.shift()!;
+          try {
+            const res = await api.speedTestLines([s.api]);
+            const r = res[0];
+            setSpeedMap((m) => ({
+              ...m,
+              [s.key]: { testing: false, ok: !!r?.ok, ms: r?.delay_ms ?? -1 },
+            }));
+          } catch {
+            setSpeedMap((m) => ({
+              ...m,
+              [s.key]: { testing: false, ok: false, ms: -1 },
+            }));
+          }
+          done += 1;
+          setBatchDone(done);
         }
-        done += 1;
-        setBatchDone(done);
-      }
-    };
-    await Promise.all(
-      Array.from({ length: Math.min(4, targets.length) }, () => worker())
-    );
-    setBatchRunning(false);
-  };
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(4, targets.length) }, () => worker())
+      );
+      setBatchRunning(false);
+    },
+    []
+  );
 
-  // 启用/停用站点（写入生效订阅的 subscriptions.json，刷新/重启后保留）
+  // 批量启用/停用（顺序写入，避免并发写坏 subscriptions.json）
+  const batchSetEnabled = useCallback(
+    async (list: SiteConfig[], enable: boolean) => {
+      const targets = list.filter((s) => siteEnabled(s) !== enable);
+      if (targets.length === 0) {
+        toast(enable ? "所选站点均已启用" : "所选站点均已停用");
+        return;
+      }
+      setBusyToggles(true);
+      let okCount = 0;
+      try {
+        for (const s of targets) {
+          try {
+            await api.setSiteEnabled(s.key, enable);
+            okCount++;
+          } catch {
+            /* 单个失败继续 */
+          }
+        }
+        await reloadState();
+        toast(
+          enable
+            ? `已批量启用 ${okCount} 个站点`
+            : `已批量停用 ${okCount} 个站点（不参与聚合搜索与浏览）`,
+          "success"
+        );
+      } finally {
+        setBusyToggles(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  // 单独启用/停用
   const toggleSite = async (site: SiteConfig) => {
     const next = !siteEnabled(site);
     try {
@@ -164,191 +184,165 @@ export default function Sources() {
 
   if (sites.length === 0) {
     return (
-      <div className="empty">
-        当前订阅没有站点。请到「设置」添加订阅。
-      </div>
+      <div className="empty">当前订阅没有站点。请到「设置」添加订阅。</div>
     );
   }
 
-  const pages = data?.pagecount ?? 1;
   const enabledCount = sites.filter(siteEnabled).length;
+  const kindOkCount = sites.filter(siteKindOk).length;
+  const htmlCount = sites.filter((s) => s.kind === "html").length;
 
   return (
     <div>
-      <h1 className="page-title">影视源</h1>
-      <p className="page-desc">
-        浏览当前订阅的站点与分类，支持分页、单站/批量连通性测试；开关切换站点启用状态（亮色=启用，灰色=停用）
-      </p>
-
-      <div style={{ display: "flex", gap: 20 }}>
-        {/* 站点列表 */}
-        <div
-          className="card"
-          style={{
-            width: 232,
-            flexShrink: 0,
-            padding: 10,
-            maxHeight: "calc(100vh - 190px)",
-            overflowY: "auto",
+      <div className="row" style={{ marginBottom: 4, flexWrap: "wrap" }}>
+        <h1 className="page-title" style={{ marginBottom: 0 }}>
+          影视源
+        </h1>
+        <div className="spacer" />
+        <button
+          className="btn"
+          disabled={batchRunning}
+          onClick={() => {
+            reloadState();
+            toast("站点列表已刷新", "success");
           }}
         >
-          {sites.map((s) => {
-            const ok = siteKindOk(s);
-            const enabled = siteEnabled(s);
-            const t = testMap[s.key];
-            return (
-              <div key={s.key}>
-                <div
-                  className={`live-channel ${current === s.key ? "active" : ""}`}
-                  style={{
-                    opacity: ok && enabled ? 1 : 0.45,
-                    cursor: ok && enabled ? "pointer" : "not-allowed",
-                  }}
-                  title={
-                    !enabled
-                      ? "已停用（开关打开即可恢复）"
-                      : ok
+          ⟳ 刷新列表
+        </button>
+        <button
+          className="btn"
+          disabled={batchRunning || busyToggles || filtered.length === 0}
+          onClick={() => batchTest(filtered)}
+        >
+          {batchRunning
+            ? `测试中 ${batchDone}/${batchTotal}…`
+            : `✓ 测试当前列表 (${filtered.length})`}
+        </button>
+        <button
+          className="btn"
+          disabled={batchRunning || busyToggles || filtered.length === 0}
+          onClick={() => batchSetEnabled(filtered, true)}
+        >
+          全部启用
+        </button>
+        <button
+          className="btn danger"
+          disabled={batchRunning || busyToggles || filtered.length === 0}
+          onClick={() => batchSetEnabled(filtered, false)}
+        >
+          全部禁用
+        </button>
+      </div>
+      <p className="page-desc">
+        共 {sites.length} 个站点 · 启用 {enabledCount} 个 · 当前列表{" "}
+        {filtered.length} 个；停用的站点不参与聚合搜索与分类浏览，开关状态持久化到订阅配置
+      </p>
+
+      {/* 筛选行 */}
+      <div className="row" style={{ marginBottom: 14, flexWrap: "wrap" }}>
+        <input
+          className="input"
+          style={{ width: 280 }}
+          placeholder="搜索站点名称 / key / 接口"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <span
+          className={`chip ${kind === "all" ? "active" : ""}`}
+          onClick={() => setKind("all")}
+        >
+          全部类型 {sites.length}
+        </span>
+        <span
+          className={`chip ${kind === "cms" ? "active" : ""}`}
+          onClick={() => setKind("cms")}
+        >
+          苹果CMS {kindOkCount}
+        </span>
+        <span
+          className={`chip ${kind === "html" ? "active" : ""}`}
+          onClick={() => setKind("html")}
+        >
+          网页 {htmlCount}
+        </span>
+        <div className="spacer" />
+        <span
+          className={`chip ${onlyEnabled ? "active" : ""}`}
+          onClick={() => setOnlyEnabled((v) => !v)}
+        >
+          只看已启用
+        </span>
+      </div>
+
+      {/* 站点列表 */}
+      <div className="card site-list">
+        {filtered.map((s) => {
+          const enabled = siteEnabled(s);
+          const ok = siteKindOk(s);
+          const sp = speedMap[s.key];
+          return (
+            <div key={s.key} className="site-row">
+              <SiteToggle on={enabled} onClick={() => toggleSite(s)} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <span
+                    className="site-name"
+                    style={{ opacity: ok ? 1 : 0.5 }}
+                    title={
+                      ok
                         ? s.name
                         : s.unsupported_reason || "不支持"
-                  }
-                  onClick={() => ok && enabled && setCurrent(s.key)}
-                >
-                  <SiteToggle on={enabled} onClick={() => toggleSite(s)} />
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
+                    }
                   >
                     {s.name}
                   </span>
-                  <span className="spacer" />
-                  {t && (
-                    <span
-                      className={`test-dot ${t === "ok" ? "ok" : t === "fail" ? "bad" : ""}`}
-                      title={
-                        t === "ok"
-                          ? "连通正常"
-                          : t === "fail"
-                            ? "连通失败"
-                            : "测试中…"
-                      }
-                    >
-                      {t === "ok" ? "✓" : t === "fail" ? "✗" : "…"}
-                    </span>
-                  )}
-                  <span className="lines">
+                  <span className="kind-tag">
                     {s.kind === "cms" || s.kind === "api"
-                      ? "CMS"
+                      ? "苹果CMS"
                       : s.kind === "html"
                         ? "网页"
                         : "不支持"}
                   </span>
+                  {s.searchable === 1 && (
+                    <span className="kind-tag green">可搜索</span>
+                  )}
                 </div>
-                {ok && !enabled && (
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text3)",
-                      padding: "0 10px 6px 34px",
-                    }}
-                  >
-                    已停用
-                  </div>
-                )}
-                {!ok && (
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text3)",
-                      padding: "0 10px 6px 34px",
-                    }}
-                  >
-                    {s.unsupported_reason}
-                  </div>
+                <div className="site-api" title={s.api}>
+                  {s.key} · {s.api}
+                </div>
+              </div>
+              <div className="site-speed" title="接口连通测速（GET 探测）">
+                {sp?.testing ? (
+                  <span className="spin">⟳</span>
+                ) : sp ? (
+                  sp.ok ? (
+                    <span className="speed-val">
+                      <span className="dot ok" />
+                      {sp.ms >= 0 ? `${sp.ms}ms` : "成功"}
+                    </span>
+                  ) : (
+                    <span className="speed-val bad">
+                      <span className="dot bad" />
+                      失败
+                    </span>
+                  )
+                ) : (
+                  <span style={{ color: "var(--text3)", fontSize: 12 }}>未测</span>
                 )}
               </div>
-            );
-          })}
-        </div>
-
-        {/* 分类 + 列表 */}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {curSite && (
-            <div className="row" style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{curSite.name}</div>
               <button
                 className="btn small"
-                disabled={testing === curSite.key}
-                onClick={() => testSite(curSite)}
+                disabled={!ok || (sp?.testing ?? false)}
+                onClick={() => testSite(s)}
               >
-                {testing === curSite.key ? "测试中…" : "测试连通"}
+                {sp?.testing ? "测试中" : "测试"}
               </button>
-              <button className="btn small" disabled={batchRunning} onClick={batchTest}>
-                {batchRunning
-                  ? `批量测试中 ${batchDone}/${sites.filter(siteKindOk).length}…`
-                  : "批量测试全部站点"}
-              </button>
-              {curSite.kind === "html" && (
-                <span style={{ color: "var(--text3)", fontSize: 12 }}>
-                  网页规则站仅支持聚合搜索，不支持分类浏览
-                </span>
-              )}
             </div>
-          )}
-
-          <div style={{ color: "var(--text3)", fontSize: 12, marginBottom: 12 }}>
-            共 {sites.length} 个站点，已启用 {enabledCount} 个；停用的站点不参与聚合搜索与浏览
-          </div>
-
-          {classes.length > 0 && (
-            <div className="row" style={{ flexWrap: "wrap", marginBottom: 16 }}>
-              {classes.map((c) => (
-                <span
-                  key={c.type_id}
-                  className={`chip ${classId === c.type_id ? "active" : ""}`}
-                  onClick={() => switchClass(c.type_id)}
-                >
-                  {c.type_name}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {loading ? (
-            <div className="loading">加载中…</div>
-          ) : data && data.items.length > 0 ? (
-            <>
-              <div className="grid">
-                {data.items.map((c) => (
-                  <PosterCard key={`${c.site_key}-${c.vod_id}`} card={c} />
-                ))}
-              </div>
-              <div className="row" style={{ marginTop: 20, justifyContent: "center" }}>
-                <button
-                  className="btn"
-                  disabled={page <= 1}
-                  onClick={() => switchPage(page - 1)}
-                >
-                  上一页
-                </button>
-                <span style={{ color: "var(--text2)", fontSize: 13 }}>
-                  第 {data.page} / {pages} 页 · 共 {data.total} 部
-                </span>
-                <button
-                  className="btn"
-                  disabled={page >= pages}
-                  onClick={() => switchPage(page + 1)}
-                >
-                  下一页
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="empty">暂无内容</div>
-          )}
-        </div>
+          );
+        })}
+        {filtered.length === 0 && (
+          <div className="empty">没有符合筛选条件的站点</div>
+        )}
       </div>
     </div>
   );

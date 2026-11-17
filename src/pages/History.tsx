@@ -45,7 +45,7 @@ export default function History() {
               <div
                 key={`${h.site_key}-${h.vod_id}`}
                 className="poster-card"
-                onClick={() => nav(`/detail/${h.site_key}/${h.vod_id}`)}
+                onClick={() => nav(`/play/${h.site_key}/${h.vod_id}`)}
                 title={h.name}
               >
                 {h.pic ? (

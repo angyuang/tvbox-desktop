@@ -171,6 +171,8 @@ interface SearchStore {
   setKw: (kw: string) => void;
   setProgress: (p: SearchProgress | null) => void;
   search: (word: string) => Promise<void>;
+  /** 清空结果（搜索页「清空结果」按钮） */
+  clearResults: () => void;
 }
 
 export const useSearch = create<SearchStore>((set, get) => ({
@@ -183,6 +185,15 @@ export const useSearch = create<SearchStore>((set, get) => ({
 
   setKw: (kw) => set({ kw }),
   setProgress: (p) => set({ progress: p }),
+
+  clearResults: () =>
+    set({
+      results: [],
+      progress: null,
+      error: "",
+      searching: false,
+      searchedKw: "",
+    }),
 
   search: async (word) => {
     const w = word.trim();

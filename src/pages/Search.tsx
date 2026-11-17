@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import PosterCard from "../components/PosterCard";
-import { api, EVENTS, onEvent } from "../api";
+import { EVENTS, onEvent } from "../api";
 import {
   useApp,
   useSearch,
@@ -9,10 +8,18 @@ import {
   removeSearchHistory,
 } from "../store";
 import type { SearchProgress } from "../store";
-import type { VideoDetail, VideoCard } from "../types";
+import type { SearchResultGroup, VideoCard } from "../types";
 
-// 搜索结果内展开的详情缓存（siteKey:vodId -> detail）
-const expandCache = new Map<string, VideoDetail>();
+// 合并后的结果卡片：同名影片跨站点聚合
+interface MergedCard {
+  title: string;
+  pic: string;
+  remarks: string;
+  score: string;
+  sites: { siteKey: string; siteName: string; vodId: number }[];
+}
+
+const commentaryRe = /解说|速看|混剪|一口气/;
 
 export default function Search() {
   const nav = useNavigate();
@@ -27,15 +34,16 @@ export default function Search() {
     setKw,
     setProgress,
     search,
+    clearResults,
   } = useSearch();
   const [params] = useSearchParams();
   const [hist, setHist] = useState<string[]>(() => loadSearchHistory());
-  // 展开选集面板的 key（siteKey:vodId）+ 面板状态
-  const [expanded, setExpanded] = useState("");
-  const [expDetail, setExpDetail] = useState<VideoDetail | null>(null);
-  const [expLoading, setExpLoading] = useState(false);
-  const [expErr, setExpErr] = useState("");
-  const [srcIdx, setSrcIdx] = useState(0);
+  // 解说过滤：初始值取设置页「过滤解说」，工具栏 chip 可临时开关
+  const [filterOn, setFilterOn] = useState<boolean>(
+    settings?.hide_commentary ?? true
+  );
+  // 来源站点筛选（空 = 全部站点）
+  const [siteFilter, setSiteFilter] = useState("");
 
   const refreshHist = () => setHist(loadSearchHistory());
 
@@ -50,7 +58,7 @@ export default function Search() {
 
   const doSearch = useCallback(
     async (word: string) => {
-      setExpanded("");
+      setSiteFilter("");
       await search(word);
       refreshHist();
     },
@@ -64,56 +72,88 @@ export default function Search() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params, searchedKw]);
 
-  // 展开/收起某个结果的选集面板（详情只拉一次，缓存复用）
-  const toggleExpand = async (gSiteKey: string, c: VideoCard) => {
-    const key = `${gSiteKey}:${c.vod_id}`;
-    if (expanded === key) {
-      setExpanded("");
-      return;
-    }
-    setExpanded(key);
-    setExpErr("");
-    setSrcIdx(0);
-    const cached = expandCache.get(key);
-    if (cached) {
-      setExpDetail(cached);
-      return;
-    }
-    setExpDetail(null);
-    setExpLoading(true);
-    try {
-      const d = await api.getDetail(gSiteKey, c.vod_id);
-      expandCache.set(key, d);
-      setExpDetail(d);
-    } catch (e) {
-      setExpErr(String(e));
-    } finally {
-      setExpLoading(false);
-    }
-  };
+  // 设置变化时同步过滤开关
+  useEffect(() => {
+    if (settings) setFilterOn(settings.hide_commentary);
+  }, [settings]);
 
-  // 从搜索结果直接点集数 -> 与详情页完全同一条播放管线（?auto=1 自动播放）
-  const playFromSearch = (
-    siteKey: string,
-    vodId: number,
-    si: number,
-    ei: number
-  ) => {
-    nav(`/detail/${siteKey}/${vodId}?src=${si}&ep=${ei}&auto=1`);
-  };
+  // 统计 + 合并（同名影片归并为一张卡）
+  const {
+    responded,
+    totalSites,
+    hits,
+    hidden,
+    merged,
+    chipGroups,
+  } = useMemo(() => {
+    const kept = (items: VideoCard[]) =>
+      filterOn ? items.filter((c) => !commentaryRe.test(c.name + c.remarks)) : items;
 
-  // 搜索结果过滤「解说/速看/混剪」（设置页可关）
-  const commentaryRe = /解说|速看|混剪|一口气/;
-  const filterItems = (items: VideoCard[]): VideoCard[] =>
-    settings?.hide_commentary
-      ? items.filter((c) => !commentaryRe.test(c.name + c.remarks))
-      : items;
+    let hits = 0;
+    let hidden = 0;
+    const byTitle = new Map<string, MergedCard>();
+    const merged: MergedCard[] = [];
+    const chipGroups: {
+      siteKey: string;
+      siteName: string;
+      count: number;
+      ok: boolean;
+    }[] = [];
+
+    for (const g of results as SearchResultGroup[]) {
+      const items = kept(g.items);
+      hidden += g.items.length - items.length;
+      chipGroups.push({
+        siteKey: g.site_key,
+        siteName: g.site_name,
+        count: g.ok ? items.length : 0,
+        ok: g.ok,
+      });
+      if (!g.ok) continue;
+      hits += items.length;
+      for (const c of items) {
+        const key = c.name.replace(/\s+/g, "");
+        let m = byTitle.get(key);
+        if (!m) {
+          m = { title: c.name, pic: "", remarks: "", score: "", sites: [] };
+          byTitle.set(key, m);
+          merged.push(m);
+        }
+        m.sites.push({ siteKey: c.site_key, siteName: c.site_name, vodId: c.vod_id });
+        if (!m.pic && c.pic) m.pic = c.pic;
+        if (!m.remarks && c.remarks) m.remarks = c.remarks;
+        if ((!m.score || m.score === "0") && c.score && c.score !== "0") {
+          m.score = c.score;
+        }
+      }
+    }
+    const totalSites = results.length;
+    const responded = results.filter((g) => g.ok).length;
+    return { responded, totalSites, hits, hidden, merged, chipGroups };
+  }, [results, filterOn]);
+
+  // 展示的卡片：按来源站点筛选
+  const visible = useMemo(
+    () =>
+      siteFilter
+        ? merged.filter((m) => m.sites.some((s) => s.siteKey === siteFilter))
+        : merged,
+    [merged, siteFilter]
+  );
+
+  // 点击卡片：筛选了某站点时优先用该站点的 vod，否则用第一个来源站点
+  const openCard = (m: MergedCard) => {
+    const target = siteFilter
+      ? m.sites.find((s) => s.siteKey === siteFilter)
+      : m.sites[0];
+    if (target) nav(`/detail/${target.siteKey}/${target.vodId}`);
+  };
 
   return (
     <div>
       <h1 className="page-title">聚合搜索</h1>
       <p className="page-desc">
-        并发搜索当前订阅下所有可搜索站点（CMS / 网页规则站），超时站点自动跳过；切换页面后搜索结果保留
+        并发搜索当前订阅下所有可搜索站点，同名影片自动合并为一张卡片；切换页面后搜索结果保留
       </p>
 
       <div className="row" style={{ marginBottom: 18 }}>
@@ -133,12 +173,6 @@ export default function Search() {
         >
           {searching ? "搜索中…" : "聚合搜索"}
         </button>
-        {searching && progress && (
-          <span className="search-progress" style={{ marginBottom: 0 }}>
-            {progress.done}/{progress.total} · {progress.siteName}{" "}
-            {progress.ok ? `找到 ${progress.count} 条` : "失败/超时"}
-          </span>
-        )}
       </div>
 
       {/* 搜索历史：点击回填关键词重新搜索 */}
@@ -180,132 +214,140 @@ export default function Search() {
         </div>
       )}
 
-      {results.map((g) => {
-        const items = filterItems(g.items);
-        const panelVid = expanded.startsWith(`${g.site_key}:`)
-          ? Number(expanded.slice(g.site_key.length + 1))
-          : null;
-        return (
-          <div className="search-group" key={g.site_key}>
-            <div className="search-group-head">
-              <span style={{ fontWeight: 700 }}>{g.site_name}</span>
-              {g.ok ? (
-                <span className="cnt">
-                  {items.length} 条结果
-                  {items.length < g.items.length && (
-                    <span className="filtered-hint">
-                      （已隐藏 {g.items.length - items.length} 条解说类）
-                    </span>
-                  )}
-                </span>
-              ) : (
-                <span className="err">失败：{g.message}</span>
-              )}
-            </div>
-            {items.length > 0 && (
-              <div className="grid">
-                {items.map((c) => (
-                  <PosterCard
-                    key={`${c.site_key}-${c.vod_id}`}
-                    card={c}
-                    showSite
-                    onClick={() => toggleExpand(g.site_key, c)}
-                  />
-                ))}
-              </div>
+      {/* 统计行 + 工具行 */}
+      {(results.length > 0 || searching) && (
+        <div className="search-stats-bar">
+          <div className="search-stats">
+            {kw.trim() && <b>「{kw.trim()}」</b>}
+            <span>
+              · {responded}/{totalSites} 个站点有响应 · 命中 {hits} 条 · 合并后{" "}
+              {merged.length} 部
+              {filterOn && hidden > 0 && ` · 已挡掉 ${hidden} 条解说`}
+            </span>
+          </div>
+          <div className="row" style={{ gap: 8 }}>
+            {searching && progress && (
+              <span className="search-live">
+                <span className="spin">⟳</span> 正在搜索 {progress.done}/
+                {progress.total}
+              </span>
             )}
-
-            {/* 展开的选集面板：片源标签 + 集数按钮，与详情页同一套数据 */}
-            {panelVid !== null && (
-              <div
-                className="card search-ep-panel"
-                style={{ marginTop: 14, padding: 16 }}
-              >
-                <div className="row" style={{ marginBottom: 10 }}>
-                  <b>选择片源与集数</b>
-                  {expLoading && (
-                    <span style={{ color: "var(--text2)" }}>加载选集中…</span>
-                  )}
-                  <div className="spacer" />
-                  <button className="btn small" onClick={() => setExpanded("")}>
-                    收起
-                  </button>
-                </div>
-                {expErr && (
-                  <div style={{ color: "var(--danger)", fontSize: 13 }}>
-                    加载失败：{expErr}
-                  </div>
-                )}
-                {expDetail && expDetail.sources.length === 0 && (
-                  <div style={{ color: "var(--text3)", fontSize: 13 }}>
-                    该结果没有可播放的选集
-                  </div>
-                )}
-                {expDetail && expDetail.sources.length > 0 && (
-                  <>
-                    <div className="src-tabs">
-                      {expDetail.sources.map((s, i) => (
-                        <span
-                          key={s.name + i}
-                          className={`chip ${i === srcIdx ? "active" : ""}`}
-                          onClick={() => setSrcIdx(i)}
-                        >
-                          {s.name}（{s.episodes.length}集）
-                        </span>
-                      ))}
-                    </div>
-                    {expDetail.sources[srcIdx] && (
-                      <div className="ep-grid" style={{ maxHeight: 220 }}>
-                        {expDetail.sources[srcIdx].episodes.map((ep, ei) => (
-                          <span
-                            key={ei}
-                            className="ep-btn"
-                            title={
-                              ep.is_web
-                                ? "网页线路：进入播放页自动嗅探直链"
-                                : ep.url
-                            }
-                            onClick={() =>
-                              playFromSearch(
-                                g.site_key,
-                                expDetail.vod_id,
-                                srcIdx,
-                                ei
-                              )
-                            }
-                          >
-                            {ep.is_web && <span className="web-flag">嗅</span>}
-                            {ep.name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="row" style={{ marginTop: 10 }}>
-                      <button
-                        className="btn small"
-                        onClick={() =>
-                          nav(`/detail/${g.site_key}/${expDetail.vod_id}`)
-                        }
-                      >
-                        查看详情页
-                      </button>
-                      <span style={{ color: "var(--text3)", fontSize: 12 }}>
-                        点击集数后进入播放页内嵌播放，与详情页选集行为一致
-                      </span>
-                    </div>
-                  </>
-                )}
-              </div>
+            {results.length > 0 && (
+              <>
+                <button
+                  className="btn small"
+                  onClick={() => {
+                    clearResults();
+                    setSiteFilter("");
+                  }}
+                >
+                  清空结果
+                </button>
+                <span
+                  className={`chip ${filterOn ? "active" : ""}`}
+                  onClick={() => setFilterOn((v) => !v)}
+                  title="过滤标题/备注含「解说、速看、混剪」的结果（默认值在设置页修改）"
+                >
+                  {filterOn ? "过滤解说" : "不过滤解说"}
+                  {filterOn && hidden > 0 ? ` ${hidden}` : ""}
+                </span>
+              </>
             )}
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {/* 来源站点筛选标签 */}
+      {results.length > 0 && (
+        <div className="src-chips">
+          <span
+            className={`chip ${siteFilter === "" ? "active" : ""}`}
+            onClick={() => setSiteFilter("")}
+          >
+            全部站点 {merged.length}
+          </span>
+          {chipGroups.map((g) => (
+            <span
+              key={g.siteKey}
+              className={`chip ${siteFilter === g.siteKey ? "active" : ""}`}
+              onClick={() =>
+                setSiteFilter((v) => (v === g.siteKey ? "" : g.siteKey))
+              }
+              title={
+                g.ok
+                  ? `${g.siteName}：命中 ${g.count} 条`
+                  : `${g.siteName}：失败/超时`
+              }
+            >
+              <span
+                className={`dot ${g.ok && g.count > 0 ? "ok" : "bad"}`}
+              />
+              {g.siteName} {g.count}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 合并后的海报网格 */}
+      {visible.length > 0 && (
+        <div className="grid">
+          {visible.map((m) => {
+            const entry = siteFilter
+              ? m.sites.find((s) => s.siteKey === siteFilter)
+              : m.sites[0];
+            return (
+              <div
+                key={m.title + m.sites[0]?.siteKey}
+                className="poster-card"
+                onClick={() => openCard(m)}
+                title={`${m.title}（${m.sites.length} 个源）`}
+              >
+                {m.pic ? (
+                  <img
+                    className="cover"
+                    src={m.pic}
+                    alt={m.title}
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display =
+                        "none";
+                    }}
+                  />
+                ) : (
+                  <div className="cover-empty">▶</div>
+                )}
+                {m.remarks && (
+                  <span className="remarks-badge">{m.remarks}</span>
+                )}
+                <div className="info">
+                  <div className="title">{m.title}</div>
+                  <div className="meta merged-meta">
+                    {m.remarks && <span>{m.remarks}</span>}
+                    {m.score && m.score !== "0" && (
+                      <span className="score">{m.score}</span>
+                    )}
+                  </div>
+                  <div className="merged-tags">
+                    {entry && <span className="mini-tag">{entry.siteName}</span>}
+                    <span className="mini-tag accent">
+                      {m.sites.length} 个源
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {!searching && results.length === 0 && !error && (
         <div className="empty">输入关键词开始聚合搜索</div>
       )}
       {searching && results.length === 0 && (
         <div className="loading">正在并发查询各站点…</div>
+      )}
+      {!searching && results.length > 0 && visible.length === 0 && (
+        <div className="empty">该站点没有命中的结果</div>
       )}
     </div>
   );

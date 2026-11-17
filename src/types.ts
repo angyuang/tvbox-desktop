@@ -7,6 +7,7 @@ export interface VideoCard {
   pic: string;
   remarks: string;
   time: string;
+  score: string;
 }
 
 export interface Episode {
@@ -165,6 +166,23 @@ export interface HomeSectionData {
   site_key: string;
   site_name: string;
   items: VideoCard[];
+}
+
+// 跨站片源池：同一部影片在其它站点的可播线路（详情/播放页换源用）
+export interface PoolLine {
+  name: string;
+  count: number;
+}
+
+export interface PoolEntry {
+  site_key: string;
+  site_name: string;
+  vod_id: number;
+  /** 该源片名（可能与搜索名略有出入，如 “凡人修仙传(重制版)”） */
+  vod_name: string;
+  pic: string;
+  remarks: string;
+  lines: PoolLine[];
 }
 
 // ---------- 应用设置（与 Rust settings.rs 一一对应） ----------

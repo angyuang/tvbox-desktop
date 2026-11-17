@@ -3,9 +3,11 @@ import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useApp } from "./store";
 import Sidebar from "./components/Sidebar";
 import Home from "./pages/Home";
+import Browse from "./pages/Browse";
 import Sources from "./pages/Sources";
 import Search from "./pages/Search";
 import Detail from "./pages/Detail";
+import Play from "./pages/Play";
 import Live from "./pages/Live";
 import LocalPlay from "./pages/LocalPlay";
 import Favorites from "./pages/Favorites";
@@ -26,9 +28,11 @@ export default function App() {
         <main className="main">
           <Routes>
             <Route path="/" element={<Home />} />
+            <Route path="/browse" element={<Browse />} />
             <Route path="/sources" element={<Sources />} />
             <Route path="/search" element={<Search />} />
             <Route path="/detail/:siteKey/:vodId" element={<Detail />} />
+            <Route path="/play/:siteKey/:vodId" element={<Play />} />
             <Route path="/live" element={<Live />} />
             <Route path="/local" element={<LocalPlay />} />
             <Route path="/favorites" element={<Favorites />} />

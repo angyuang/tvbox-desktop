@@ -3,6 +3,7 @@ import { useApp } from "../store";
 
 const items: { to: string; label: string; icon: string }[] = [
   { to: "/", label: "首页", icon: "⌂" },
+  { to: "/browse", label: "分类浏览", icon: "▦" },
   { to: "/sources", label: "影视源", icon: "▤" },
   { to: "/search", label: "聚合搜索", icon: "⌕" },
   { to: "/live", label: "直播电视", icon: "◉" },

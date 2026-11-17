@@ -105,6 +105,7 @@ pub async fn search_html_site(
             pic,
             remarks,
             time: String::new(),
+            score: String::new(),
         });
     }
     Ok(cards)

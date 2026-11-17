@@ -1,6 +1,6 @@
 [package]
 name = "tvbox-desktop-tauri"
-version = "1.6.2"
+version = "1.7.0"
 description = "TVBox Desktop 重写版：Tauri 2 + Rust + React"
 authors = ["you"]
 edition = "2021"

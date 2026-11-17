@@ -119,6 +119,34 @@ async fn fetch_cms(
         .map_err(|e| AppError::Parse(format!("站点 {} 响应解析失败: {e}", site.name)))
 }
 
+/// 评分统一转文本：数字去尾零（7.90 -> 7.9，7.0 -> 7），字符串原样，空/无效 -> 空
+fn score_text(v: &Option<serde_json::Value>) -> String {
+    match v {
+        Some(serde_json::Value::Number(n)) => {
+            let s = n.to_string();
+            if let Ok(f) = s.parse::<f64>() {
+                if f <= 0.0 {
+                    return String::new();
+                }
+                if f.fract() == 0.0 {
+                    return format!("{}", f as i64);
+                }
+                return format!("{:.1}", f);
+            }
+            s
+        }
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            if t == "0" || t == "0.0" {
+                String::new()
+            } else {
+                t.to_string()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
 fn vod_to_card(site: &SiteConfig, v: CmsVod) -> VideoCard {
     VideoCard {
         site_key: site.key.clone(),
@@ -128,6 +156,7 @@ fn vod_to_card(site: &SiteConfig, v: CmsVod) -> VideoCard {
         pic: v.vod_pic,
         remarks: v.vod_remarks,
         time: v.vod_time,
+        score: score_text(&v.vod_score),
     }
 }
 
