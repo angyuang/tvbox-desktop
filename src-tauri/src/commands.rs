@@ -3,7 +3,6 @@ use crate::error::{AppError, AppResult};
 use crate::models::*;
 use crate::state::{AppState, RuntimeState};
 use serde::Serialize;
-use tauri::Manager;
 
 #[derive(Serialize, Default)]
 pub struct HomeSectionData {
@@ -395,8 +394,68 @@ pub async fn aggregate_search(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     wd: String,
+    skip: Option<Vec<String>>,
 ) -> AppResult<Vec<SearchResultGroup>> {
-    crate::search::aggregate_search(&app, &state, &wd).await
+    crate::search::aggregate_search(&app, &state, &wd, skip.as_deref()).await
+}
+
+// ---------------- 站点测速（影视源管理表格） ----------------
+
+#[derive(Serialize, Default)]
+pub struct SiteTestResult {
+    pub ok: bool,
+    pub ms: u64,
+    pub message: String,
+}
+
+/// 轻量连通性测试：请求一次分类接口并计时，供源管理表格批量测试。
+/// 失败原因已按 DNS / TLS / 超时 / HTTP 状态分类，可直接展示。
+#[tauri::command]
+pub async fn test_site(
+    state: tauri::State<'_, AppState>,
+    site_key: String,
+) -> AppResult<SiteTestResult> {
+    let cfg = {
+        let rt = state.runtime.lock().await;
+        state.active_config(&rt)
+    };
+    let site = cfg
+        .as_ref()
+        .and_then(|c| c.sites.iter().find(|s| s.key == site_key))
+        .cloned()
+        .ok_or_else(|| AppError::msg("站点不存在"))?;
+    let ua = state.effective_ua();
+    let timeout = state
+        .settings
+        .read()
+        .map(|s| s.request_timeout.min(15))
+        .unwrap_or(12)
+        .max(5);
+    let start = std::time::Instant::now();
+    let r: AppResult<()> = if site.is_cms() {
+        crate::cms::fetch_categories(&state.client, &ua, &site)
+            .await
+            .map(|_| ())
+    } else if site.kind == "html" {
+        crate::http::fetch_text(&state.client, &site.api, &ua, &Default::default(), timeout)
+            .await
+            .map(|_| ())
+    } else {
+        Err(AppError::msg(site.unsupported_reason.clone()))
+    };
+    let ms = start.elapsed().as_millis() as u64;
+    Ok(match r {
+        Ok(()) => SiteTestResult {
+            ok: true,
+            ms,
+            message: "连接正常".into(),
+        },
+        Err(e) => SiteTestResult {
+            ok: false,
+            ms,
+            message: e.to_string(),
+        },
+    })
 }
 
 // ---------------- 直播 ----------------
@@ -618,129 +677,5 @@ pub async fn open_sniffer(_app: tauri::AppHandle, url: String) -> AppResult<()> 
 #[tauri::command]
 pub async fn close_sniffer(app: tauri::AppHandle) -> AppResult<()> {
     crate::sniffer::close_sniffer_window(&app);
-    Ok(())
-}
-
-// ---------------- 站点测试 / 站点开关 / 窗口主题 ----------------
-
-#[derive(Serialize)]
-pub struct SiteTestResult {
-    pub ok: bool,
-    pub ms: i64,
-    pub message: String,
-}
-
-/// 单站点连通性测试：拉取分类接口并计时（影视源表格「测试」按钮）
-#[tauri::command]
-pub async fn test_site(
-    state: tauri::State<'_, AppState>,
-    site_key: String,
-) -> AppResult<SiteTestResult> {
-    let cfg = {
-        let rt = state.runtime.lock().await;
-        state.active_config(&rt)
-    };
-    let site = cfg
-        .as_ref()
-        .and_then(|c| c.sites.iter().find(|s| s.key == site_key))
-        .cloned()
-        .ok_or_else(|| AppError::msg("站点不存在"))?;
-    if !site.is_cms() {
-        return Ok(SiteTestResult {
-            ok: false,
-            ms: 0,
-            message: "网页规则站仅支持聚合搜索，无法测试分类接口".into(),
-        });
-    }
-    let start = std::time::Instant::now();
-    match crate::cms::fetch_categories(&state.client, &state.effective_ua(), &site).await {
-        Ok(_) => Ok(SiteTestResult {
-            ok: true,
-            ms: start.elapsed().as_millis() as i64,
-            message: String::new(),
-        }),
-        Err(e) => Ok(SiteTestResult {
-            ok: false,
-            ms: start.elapsed().as_millis() as i64,
-            message: e.to_string(),
-        }),
-    }
-}
-
-/// 找到生效配置对应的订阅索引
-async fn active_sub_index(state: &AppState) -> AppResult<usize> {
-    let rt = state.runtime.lock().await;
-    let idx = rt
-        .subscriptions
-        .iter()
-        .position(|s| s.enabled && rt.active_id.as_deref() == Some(s.id.as_str()))
-        .or_else(|| rt.subscriptions.iter().position(|s| s.enabled))
-        .ok_or_else(|| AppError::msg("没有启用的订阅"))?;
-    Ok(idx)
-}
-
-/// 单站点启用/禁用（影视源表格的开关，写入订阅配置持久化）
-#[tauri::command]
-pub async fn set_site_enabled(
-    state: tauri::State<'_, AppState>,
-    site_key: String,
-    enabled: bool,
-) -> AppResult<()> {
-    let idx = active_sub_index(&state).await?;
-    with_runtime(&state, |rt| {
-        let sub = rt
-            .subscriptions
-            .get_mut(idx)
-            .ok_or_else(|| AppError::msg("订阅不存在"))?;
-        let site = sub
-            .config
-            .sites
-            .iter_mut()
-            .find(|s| s.key == site_key)
-            .ok_or_else(|| AppError::msg("站点不存在"))?;
-        site.enabled = Some(if enabled { 1 } else { 0 });
-        crate::storage::save_all(&state.data_dir, rt)?;
-        Ok(())
-    })
-    .await
-}
-
-/// 全部站点一键启用/禁用
-#[tauri::command]
-pub async fn set_all_sites_enabled(
-    state: tauri::State<'_, AppState>,
-    enabled: bool,
-) -> AppResult<()> {
-    let idx = active_sub_index(&state).await?;
-    with_runtime(&state, |rt| {
-        let sub = rt
-            .subscriptions
-            .get_mut(idx)
-            .ok_or_else(|| AppError::msg("订阅不存在"))?;
-        let flag = if enabled { 1 } else { 0 };
-        for s in sub.config.sites.iter_mut() {
-            s.enabled = Some(flag);
-        }
-        crate::storage::save_all(&state.data_dir, rt)?;
-        Ok(())
-    })
-    .await
-}
-
-/// 同步原生窗口主题（暗色时标题栏一起变暗，否则非常突兀）
-/// theme: light | dark | night | system（night 归入 dark；system 跟随操作系统）
-#[tauri::command]
-pub async fn set_window_theme(app: tauri::AppHandle, theme: String) -> AppResult<()> {
-    use tauri::Theme;
-    let Some(win) = app.get_webview_window("main") else {
-        return Ok(());
-    };
-    let t = match theme.as_str() {
-        "dark" | "night" => Some(Theme::Dark),
-        "light" => Some(Theme::Light),
-        _ => None, // system：交还系统跟随
-    };
-    win.set_theme(t)
-        .map_err(|e| AppError::msg(format!("设置窗口主题失败: {e}")))?;
     Ok(())
 }

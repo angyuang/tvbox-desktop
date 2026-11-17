@@ -18,7 +18,6 @@ pub mod state;
 pub mod storage;
 
 use state::{AppState, RuntimeState, USER_AGENT};
-use std::time::Duration;
 use tauri::Manager;
 
 pub fn run() {
@@ -28,17 +27,7 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let client = reqwest::Client::builder()
-                .user_agent(USER_AGENT)
-                .timeout(Duration::from_secs(25))
-                // 连接超时独立于总超时：失败站点尽快暴露，不拖满整个超时
-                .connect_timeout(Duration::from_secs(10))
-                // 采集站普遍证书不规范（自签名/过期/链不全），且部分老服务器 HTTP/2 兼容差
-                .danger_accept_invalid_certs(true)
-                .danger_accept_invalid_hostnames(true)
-                .http1_only()
-                .redirect(reqwest::redirect::Policy::limited(8))
-                .build()?;
+            let client = crate::http::build_client(USER_AGENT)?;
             let runtime: RuntimeState = storage::load_all(&data_dir)?;
             let settings = settings::load_settings(&data_dir);
             app.manage(AppState {
@@ -64,6 +53,7 @@ pub fn run() {
             commands::get_videolist,
             commands::get_detail,
             commands::aggregate_search,
+            commands::test_site,
             commands::get_live_channels,
             commands::speed_test_lines,
             commands::resolve_room_url,
@@ -85,10 +75,6 @@ pub fn run() {
             commands::sniff_page,
             commands::open_sniffer,
             commands::close_sniffer,
-            commands::test_site,
-            commands::set_site_enabled,
-            commands::set_all_sites_enabled,
-            commands::set_window_theme,
         ])
         .run(tauri::generate_context!())
         .expect("TVBox Desktop 启动失败");

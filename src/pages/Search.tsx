@@ -1,35 +1,52 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import PosterCard from "../components/PosterCard";
 import { EVENTS, onEvent } from "../api";
 import { useApp } from "../store";
+import {
+  clearSearchHistory,
+  getSearchHistory,
+  removeSearchHistory,
+  type SearchHistItem,
+} from "../local";
 import type { VideoCard } from "../types";
-import type { SearchProgressInfo } from "../store";
 
 export default function Search() {
-  const {
-    settings,
-    searchKw,
-    searchResults,
-    searching,
-    searchError,
-    searchProgress,
-    lastSearched,
-    runSearch,
-    clearSearch,
-  } = useApp();
+  const { settings, searchKw, searchResults, searching, searchError, searchProgress, runSearch, resetSearch, setSearchProgress, dropSearchHistory, toast } = useApp();
   const [params] = useSearchParams();
-  // 输入框本地草稿：优先 URL 参数，其次上次搜索词
-  const [kw, setKw] = useState(() => params.get("q") ?? searchKw ?? "");
-  const [progress, setProgress] = useState<SearchProgressInfo | null>(null);
-  const kwRef = useRef("");
+  const [kw, setKw] = useState(searchKw);
+  const [hist, setHist] = useState<SearchHistItem[]>(getSearchHistory());
 
-  // 仅当 URL 里的关键词与已搜索的不同时才真正发起搜索；
-  // 从详情页返回（同关键词）时直接显示上次结果，不发请求。
+  const refreshHist = useCallback(() => setHist(getSearchHistory()), []);
+
+  // 进度事件 -> 全局 store（切页回来也能看到进度）
   useEffect(() => {
-    const q = (params.get("q") ?? "").trim();
-    if (q && q !== lastSearched && !useApp.getState().searching) {
-      kwRef.current = q;
+    let un: (() => void) | undefined;
+    onEvent<{
+      done: number;
+      total: number;
+      siteKey: string;
+      siteName: string;
+      ok: boolean;
+      count: number;
+    }>(EVENTS.SEARCH_PROGRESS, (p) =>
+      setSearchProgress({
+        done: p.done,
+        total: p.total,
+        siteKey: p.siteKey,
+        siteName: p.siteName,
+        ok: p.ok,
+        count: p.count,
+      })
+    ).then((f) => (un = f));
+    return () => un?.();
+  }, [setSearchProgress]);
+
+  // 从外部（首页推荐等）带关键词跳进来时才自动搜；普通切页/返回不重搜（结果保活）
+  useEffect(() => {
+    const q = params.get("q");
+    if (q && q !== searchKw && !searching) {
+      setKw(q);
       void runSearch(q);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -38,19 +55,22 @@ export default function Search() {
   const doSearch = (word: string) => {
     const w = word.trim();
     if (!w) return;
-    kwRef.current = w;
-    void runSearch(w);
+    setKw(w);
+    void runSearch(w).then(refreshHist);
   };
 
-  // 进度事件（写入本地 + 全局：中途离开再回来也能看到进度）
-  useEffect(() => {
-    let un: (() => void) | undefined;
-    onEvent<SearchProgressInfo>(EVENTS.SEARCH_PROGRESS, (p) => {
-      setProgress(p);
-      useApp.setState({ searchProgress: p });
-    }).then((f) => (un = f));
-    return () => un?.();
-  }, []);
+  const removeHist = (w: string) => {
+    removeSearchHistory(w);
+    dropSearchHistory(w);
+    refreshHist();
+  };
+
+  const clearHist = () => {
+    if (hist.length === 0) return;
+    clearSearchHistory();
+    refreshHist();
+    toast("搜索历史已清空");
+  };
 
   // 搜索结果过滤「解说/速看/混剪」（设置页可关）
   const commentaryRe = /解说|速看|混剪|一口气/;
@@ -59,16 +79,14 @@ export default function Search() {
       ? items.filter((c) => !commentaryRe.test(c.name + c.remarks))
       : items;
 
-  const showProgress = searching ? progress ?? searchProgress : null;
-
   return (
     <div>
       <h1 className="page-title">聚合搜索</h1>
       <p className="page-desc">
-        并发搜索当前订阅下所有可搜索站点（CMS / 网页规则站），超时站点自动跳过；进入详情页再返回不会丢失结果
+        并发搜索当前订阅下所有已启用的可搜索站点，超时站点自动跳过；返回本页不会丢失结果
       </p>
 
-      <div className="row" style={{ marginBottom: 18 }}>
+      <div className="row" style={{ marginBottom: 10 }}>
         <input
           className="input"
           style={{ width: 360, padding: "11px 14px" }}
@@ -85,28 +103,43 @@ export default function Search() {
         >
           {searching ? "搜索中…" : "聚合搜索"}
         </button>
-        {lastSearched && !searching && (
-          <button
-            className="btn small"
-            onClick={() => {
-              clearSearch();
-              setKw("");
-            }}
-            title="清空当前搜索结果"
-          >
-            清空结果
-          </button>
-        )}
-        {showProgress && (
+        {searching && searchProgress && (
           <span className="search-progress" style={{ marginBottom: 0 }}>
-            {showProgress.done}/{showProgress.total} · {showProgress.siteName}{" "}
-            {showProgress.ok ? `找到 ${showProgress.count} 条` : "失败/超时"}
+            {searchProgress.done}/{searchProgress.total} · {searchProgress.siteName}{" "}
+            {searchProgress.ok ? `找到 ${searchProgress.count} 条` : "失败/超时"}
           </span>
         )}
       </div>
 
+      {/* 历史搜索记录：点击重搜，可单条删除 / 一键清空 */}
+      {hist.length > 0 && (
+        <div className="hist-box">
+          <span className="hist-label">搜索历史</span>
+          <div className="hist-chips">
+            {hist.map((h) => (
+              <span key={h.kw} className="hist-chip" onClick={() => doSearch(h.kw)} title={`点击重新搜索「${h.kw}」`}>
+                <span className="hist-kw">{h.kw}</span>
+                <span
+                  className="hist-x"
+                  title="删除该记录"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeHist(h.kw);
+                  }}
+                >
+                  ×
+                </span>
+              </span>
+            ))}
+          </div>
+          <button className="btn small hist-clear" onClick={clearHist}>
+            清空
+          </button>
+        </div>
+      )}
+
       {searchError && (
-        <div className="toast-error" style={{ color: "var(--danger)", marginBottom: 14 }}>
+        <div className="toast-error" style={{ color: "#dc2626", marginBottom: 14 }}>
           搜索失败：{searchError}
         </div>
       )}
@@ -143,11 +176,22 @@ export default function Search() {
         );
       })}
 
-      {!searching && searchResults.length === 0 && !searchError && (
-        <div className="empty">输入关键词开始聚合搜索</div>
+      {!searching && searchResults.length === 0 && !searchError && !searchKw && (
+        <div className="empty">输入关键词开始聚合搜索，历史记录会显示在上方</div>
       )}
       {searching && searchResults.length === 0 && (
         <div className="loading">正在并发查询各站点…</div>
+      )}
+      {!searching && searchResults.length === 0 && !searchError && searchKw && (
+        <div className="empty">
+          「{searchKw}」没有搜索到结果
+          <button className="btn small" style={{ marginLeft: 10 }} onClick={() => doSearch(searchKw)}>
+            重新搜索
+          </button>
+          <button className="btn small" style={{ marginLeft: 8 }} onClick={resetSearch}>
+            清空结果
+          </button>
+        </div>
       )}
     </div>
   );

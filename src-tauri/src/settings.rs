@@ -37,7 +37,7 @@ pub struct AppSettings {
     pub hide_commentary: bool,
     /// 界面密度：cozy | compact
     pub density: String,
-    /// 主题：light | dark | night | system
+    /// 界面主题：light | dark | system（跟随系统）
     pub theme: String,
     /// 强调色 #RRGGBB
     pub accent: String,
@@ -57,7 +57,7 @@ impl Default for AppSettings {
             request_timeout: 20,
             hide_commentary: true,
             density: "cozy".into(),
-            theme: "light".into(),
+            theme: "system".into(),
             accent: "#2563eb".into(),
             ua: String::new(),
             ext_player: String::new(),
@@ -83,8 +83,8 @@ impl AppSettings {
         if !self.density.eq("compact") {
             self.density = "cozy".into();
         }
-        if !matches!(self.theme.as_str(), "dark" | "night" | "system") {
-            self.theme = "light".into();
+        if !matches!(self.theme.as_str(), "light" | "dark" | "system") {
+            self.theme = "system".into();
         }
         let a = self.accent.trim();
         self.accent = if is_hex_color(a) { a.to_lowercase() } else { "#2563eb".into() };

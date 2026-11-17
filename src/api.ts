@@ -15,7 +15,6 @@ import type {
   HomeSectionData,
   AppSettings,
   AppInfo,
-  SiteTestResult,
 } from "./types";
 
 export const api = {
@@ -45,8 +44,10 @@ export const api = {
     invoke<PagedVideos>("get_videolist", { siteKey, typeId, page }),
   getDetail: (siteKey: string, vodId: number) =>
     invoke<VideoDetail>("get_detail", { siteKey, vodId }),
-  aggregateSearch: (wd: string) =>
-    invoke<SearchResultGroup[]>("aggregate_search", { wd }),
+  aggregateSearch: (wd: string, skip?: string[]) =>
+    invoke<SearchResultGroup[]>("aggregate_search", { wd, skip: skip?.length ? skip : null }),
+  testSite: (siteKey: string) =>
+    invoke<{ ok: boolean; ms: number; message: string }>("test_site", { siteKey }),
 
   getLiveChannels: () => invoke<LiveChannelGroup[]>("get_live_channels"),
   speedTestLines: (urls: string[]) =>
@@ -91,18 +92,6 @@ export const api = {
     actor: string;
     content: string;
   }) => invoke<string>("ai_summary", args),
-
-  // 影视源表格：单站测试 / 站点开关 / 一键全部启用禁用
-  testSite: (siteKey: string) =>
-    invoke<SiteTestResult>("test_site", { siteKey }),
-  setSiteEnabled: (siteKey: string, enabled: boolean) =>
-    invoke<void>("set_site_enabled", { siteKey, enabled }),
-  setAllSitesEnabled: (enabled: boolean) =>
-    invoke<void>("set_all_sites_enabled", { enabled }),
-
-  // 同步原生窗口主题（暗色时标题栏一起变暗）
-  setWindowTheme: (theme: string) =>
-    invoke<void>("set_window_theme", { theme }),
 };
 
 export type Unlisten = () => void;

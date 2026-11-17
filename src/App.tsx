@@ -7,17 +7,18 @@ import Sources from "./pages/Sources";
 import Search from "./pages/Search";
 import Detail from "./pages/Detail";
 import Live from "./pages/Live";
+import LocalPlay from "./pages/LocalPlay";
 import Favorites from "./pages/Favorites";
 import History from "./pages/History";
 import Settings from "./pages/Settings";
-import Local from "./pages/Local";
 
 export default function App() {
-  const { toasts, reloadAll } = useApp();
+  const { toasts, reloadAll, bindSystemTheme } = useApp();
 
   useEffect(() => {
     reloadAll();
-  }, [reloadAll]);
+    bindSystemTheme();
+  }, [reloadAll, bindSystemTheme]);
 
   return (
     <HashRouter>
@@ -30,7 +31,7 @@ export default function App() {
             <Route path="/search" element={<Search />} />
             <Route path="/detail/:siteKey/:vodId" element={<Detail />} />
             <Route path="/live" element={<Live />} />
-            <Route path="/local" element={<Local />} />
+            <Route path="/local" element={<LocalPlay />} />
             <Route path="/favorites" element={<Favorites />} />
             <Route path="/history" element={<History />} />
             <Route path="/settings" element={<Settings />} />

@@ -5,8 +5,6 @@ use crate::state::AppState;
 use futures::stream::{self, StreamExt};
 use tauri::Emitter;
 
-const MAX_CONCURRENCY: usize = 6;
-
 async fn search_site(
     state: &AppState,
     site: SiteConfig,
@@ -54,12 +52,13 @@ async fn search_site(
     }
 }
 
-/// 聚合搜索：active 订阅下所有 searchable 站点并发搜索。
+/// 聚合搜索：active 订阅下所有 searchable 站点并发搜索（可传 skip 跳过停用站点）。
 /// 每完成一个站点 emit "search:progress" { done, total, site_key, ok, count }。
 pub async fn aggregate_search(
     app: &tauri::AppHandle,
     state: &AppState,
     wd: &str,
+    skip: Option<&[String]>,
 ) -> AppResult<Vec<SearchResultGroup>> {
     let wd = wd.trim().to_string();
     if wd.is_empty() {
@@ -76,6 +75,10 @@ pub async fn aggregate_search(
         .sites
         .into_iter()
         .filter(|s| s.is_searchable())
+        .filter(|s| {
+            // 影视源页停用的站点不参与搜索
+            !skip.map(|list| list.iter().any(|k| k == &s.key)).unwrap_or(false)
+        })
         .collect();
     let total = sites.len();
     let (concurrency, timeout_secs, ua) = {
@@ -84,7 +87,7 @@ pub async fn aggregate_search(
             .settings
             .read()
             .map(|s| (s.search_concurrency, s.request_timeout, s.effective_ua()))
-            .unwrap_or((MAX_CONCURRENCY, 12, crate::state::USER_AGENT.to_string()))
+            .unwrap_or((6, 12, crate::state::USER_AGENT.to_string()))
     };
     let app_handle = app.clone();
 
