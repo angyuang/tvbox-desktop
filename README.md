@@ -172,7 +172,9 @@ cd src-tauri && cargo test
 **本项目为壳项目不内置订阅源**
 如有需求请自行收集[苹果CMSV10(MACcmsV10)](https://github.com/magicblack/maccms10)源，[参考源](https://github.com/hafrey1/LunaTV-config)
 ## 源路径 
-
+> C:\Users\用户名\AppData\Roaming\com.tvbox.desktop\
+> 搜索历史记录:history.json
+> 配置tvbox视频源:subscriptions.json
 ```json
 {
   "active_id": null,
